@@ -22,7 +22,7 @@ agent can't grade its own homework or quit early.
 ## Install
 ```
 /plugin marketplace add markudevelop/outcome-fusion-principia
-/plugin install outcome-fusion-principia@outcome-fusion-local
+/plugin install outcome-fusion-principia@outcome-fusion
 ```
 
 Set `DEEPSEEK_API_KEY` (or an Anthropic-compatible `ANTHROPIC_API_KEY`). Without

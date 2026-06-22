@@ -51,7 +51,7 @@ prompt ──▶ [DeepSeek mission compiler] ──▶ Claude works ──▶ [D
 
 ```text
 /plugin marketplace add markudevelop/outcome-fusion-principia
-/plugin install outcome-fusion-principia@outcome-fusion-local
+/plugin install outcome-fusion-principia@outcome-fusion
 ```
 
 Then set your DeepSeek key (the plugin also accepts `ANTHROPIC_API_KEY` /
