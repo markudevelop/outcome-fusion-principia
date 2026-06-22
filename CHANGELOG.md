@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.9
+
+### Fixed
+- **Lazy-impossibility false positives.** The detector flagged any occurrence of
+  "impossible / cannot / can't / won't work" — including when the agent was
+  *quoting* the word, showing it in code, discussing the rule, or listing it in a
+  markdown table. That forced spurious release-gate FAILs (observed repeatedly).
+  It now strips quoted/code spans and ignores rule-discussion and table-cell
+  lines, so it fires only on a genuine prose refusal. Covered by a labelled
+  false-positive test set.
+- **`memory.md` no longer accumulates duplicates.** `append_memory` skips a
+  lesson identical to one already recorded, instead of piling up the same line.
+
 ## 0.3.8
 
 ### Added

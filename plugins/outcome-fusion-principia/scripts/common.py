@@ -340,9 +340,36 @@ def parse_json_loose(text: str) -> dict[str, Any]:
     return {}
 
 
+# Spans that are quoting/illustrating a word rather than asserting it: fenced
+# code, inline code, and quoted strings. Stripped before lazy detection.
+_QUOTE_OR_CODE = re.compile(r"```.*?```|`[^`]*`|\"[^\"]*\"|'[^']*'", re.S)
+# A line that is talking *about* the forbidden words (a rule or instruction),
+# not making the claim itself.
+_RULE_CONTEXT = re.compile(
+    r"never say|do(?:n'?t| not) say|avoid saying|stop saying|the word|scenario|example|quoting|flagged?",
+    re.I,
+)
+
+
 def contains_lazy_impossible(text: str) -> bool:
-    hay = (text or "").lower()
-    return any(re.search(p, hay) for p in LAZY_IMPOSSIBLE_PATTERNS)
+    """True only when the agent itself asserts impossibility.
+
+    Quoting the words, showing them in code, or discussing the rule must NOT
+    trip this — those false positives forced spurious release-gate FAILs.
+    """
+    if not text:
+        return False
+    cleaned = _QUOTE_OR_CODE.sub(" ", text)
+    flagged_lines = [
+        ln for ln in cleaned.splitlines()
+        if any(re.search(p, ln.lower()) for p in LAZY_IMPOSSIBLE_PATTERNS)
+    ]
+    # A real refusal is prose the agent asserts: not meta-discussion of the
+    # words, and not a markdown table cell (illustrative, e.g. eval scenarios).
+    return any(
+        not _RULE_CONTEXT.search(ln) and "|" not in ln
+        for ln in flagged_lines
+    )
 
 
 def should_skip_prompt(prompt: str) -> bool:
@@ -559,12 +586,18 @@ The main outcome works end to end. Relevant tests or checks were run. Claims are
 def append_memory(wdir: Path, text: str) -> None:
     if not text or not text.strip():
         return
-    entry = f"\n\n## {time.strftime('%Y-%m-%d %H:%M:%S')}\n{redact(text.strip(), limit=5000)}\n"
+    lesson = redact(text.strip(), limit=5000)
+    # Dedup: don't append a lesson identical to one already recorded recently.
+    # Without this the same fallback lesson piled up dozens of times.
+    if lesson in safe_read(wdir / "memory.md", limit=8000):
+        return
+    entry = f"\n\n## {time.strftime('%Y-%m-%d %H:%M:%S')}\n{lesson}\n"
     safe_append(wdir / "memory.md", entry, max_chars=80000)
     # Also keep repo-level memory shared across future sessions in the same repo.
     try:
         root = wdir.parent.parent if wdir.parent.name == "sessions" else wdir
-        safe_append(root / "memory.md", entry, max_chars=120000)
+        if lesson not in safe_read(root / "memory.md", limit=8000):
+            safe_append(root / "memory.md", entry, max_chars=120000)
     except Exception:
         pass
 

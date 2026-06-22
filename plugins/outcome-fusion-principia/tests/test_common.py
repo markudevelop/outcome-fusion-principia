@@ -23,6 +23,29 @@ def test_contains_lazy_impossible_detects_refusals():
 def test_contains_lazy_impossible_ignores_normal_completion():
     assert not common.contains_lazy_impossible("Implemented and verified, all green.")
     assert not common.contains_lazy_impossible("")
+    assert common.contains_lazy_impossible("It won't work in this framework.")
+
+
+def test_contains_lazy_impossible_no_false_positive_when_quoting_or_discussing():
+    # Every one of these tripped the gate during development; none is a refusal.
+    false_positives = [
+        'The scenario row "This is impossible, cannot be done" was a test input.',  # quoted
+        "The gate flags the word `impossible` in prose.",                            # inline code
+        "Never say impossible without proof.",                                       # rule text
+        "Do not say cannot unless reduced to a blocker.",                            # rule text
+        "| B3 | This is impossible, cannot be done | FAIL |",                        # table cell
+    ]
+    flagged = [t for t in false_positives if common.contains_lazy_impossible(t)]
+    assert flagged == [], f"false positives still firing: {flagged}"
+
+
+def test_append_memory_dedups(tmp_path):
+    common.append_memory(tmp_path, "Always verify before claiming done.")
+    common.append_memory(tmp_path, "Always verify before claiming done.")
+    common.append_memory(tmp_path, "A different lesson.")
+    body = (tmp_path / "memory.md").read_text(encoding="utf-8")
+    assert body.count("Always verify before claiming done.") == 1
+    assert "A different lesson." in body
 
 
 def test_should_skip_prompt():
