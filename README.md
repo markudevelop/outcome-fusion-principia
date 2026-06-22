@@ -80,7 +80,7 @@ The key also resolves from `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` against
 | `OUTCOME_FUSION_SHOW_MISSION_CHARS` | `4000` | Max chars of mission shown |
 | `OUTCOME_FUSION_TERMINAL_LOG` | `1` | Show compact terminal status lines |
 | `OUTCOME_FUSION_RETRIES` | `1` | DeepSeek retries on a transient error |
-| `OUTCOME_FUSION_GATE_VOTES` | `1` | Perspective-diverse judge votes; aggregated to a majority verdict (>1 = more reliable, more cost). See [`docs/MODEL_FUSION.md`](plugins/outcome-fusion-principia/docs/MODEL_FUSION.md) |
+| `OUTCOME_FUSION_GATE_VOTES` | `1` | Perspective-diverse judge votes, aggregated to a majority verdict. In a small A/B, `3` cut false-blocks 2/5→0/5 at 3× cost — recommended for higher-stakes turns. See [`docs/MODEL_FUSION.md`](plugins/outcome-fusion-principia/docs/MODEL_FUSION.md) |
 | `OUTCOME_FUSION_JSON_RETRIES` | `1` | Re-asks the judge once if its JSON does not parse |
 | `OUTCOME_FUSION_MAX_CONTINUES` | `5` | Max forced continuations before manual review |
 | `OUTCOME_FUSION_EFFORT` | `high` | Reasoning effort sent to the model |

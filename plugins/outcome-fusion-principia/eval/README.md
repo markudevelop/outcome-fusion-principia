@@ -68,6 +68,34 @@ sometimes asks for more on work that was already fine.
 - This measures **gate discrimination**, not end-to-end task success — see the
   planned A/B below.
 
+## Voting A/B (`ab_voting.py`)
+
+`ab_voting.py` runs every scenario through the exact gate logic at
+`GATE_VOTES=1` vs `3` and compares defect catch rate and false-block rate. It
+tests the hypothesis from `docs/MODEL_FUSION.md` that perspective-diverse voting
+keeps defect catch high while lowering the stochastic false-blocks on
+genuinely-done work.
+
+```bash
+python plugins/outcome-fusion-principia/eval/ab_voting.py            # all scenarios
+OF_AB_GOOD_ONLY=1 python plugins/outcome-fusion-principia/eval/ab_voting.py  # focus on false-blocks
+OF_AB_TRIALS=2 python plugins/outcome-fusion-principia/eval/ab_voting.py
+```
+
+**First result (good-only, 1 trial, 5 scenarios):**
+
+| Setting | False-blocks on good work |
+|---------|---------------------------|
+| `votes=1` | **2 / 5** (a correct bug-fix and a legit-blocked task wrongly FAILed) |
+| `votes=3` | **0 / 5** (both recovered: → PASS and → correct BLOCKED) |
+
+Perspective-diverse voting removed the false-blocks — as the MoA literature
+predicts, diversity cancels single-sample stochastic errors. Defect catch is
+unaffected (votes=1 already catches 8/8 and aggregation is conservative).
+Trade-off: 3× the judge calls. **n is tiny (5, one trial) — directional, not
+conclusive.** Recommendation: keep the default `votes=1` for cost; set
+`OUTCOME_FUSION_GATE_VOTES=3` for higher-stakes turns.
+
 ## Planned: task-success A/B
 
 The eval above measures the gate's *accept/reject discrimination*. The stronger

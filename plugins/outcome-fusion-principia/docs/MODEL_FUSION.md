@@ -42,7 +42,7 @@ a single agent's output; aggregation and consistency help.
 | Principle (sourced) | Application here |
 |---|---|
 | Two roles: proposer + judge | Claude proposes; DeepSeek is the independent judge. The judge is a *different model*, so it cannot rubber-stamp the proposer. |
-| Diversity of independent attempts drives the gain (self-MoA) | `OUTCOME_FUSION_GATE_VOTES>1` samples the judge multiple times. v0.5.0 makes those samples **perspective-diverse** — each vote gets a different lens (evidence, completeness, simplicity, correctness) instead of identical re-rolls, which is the diversity the research says actually helps. |
+| Diversity of independent attempts drives the gain (self-MoA) | `OUTCOME_FUSION_GATE_VOTES>1` samples the judge multiple times. v0.5.0 makes those samples **perspective-diverse** — each vote gets a different lens (evidence, completeness, simplicity, correctness) instead of identical re-rolls, which is the diversity the research says actually helps. **Measured** (`eval/ab_voting.py`, good-only, 1 trial): `votes=3` cut false-blocks on genuinely-done work from 2/5 to 0/5 vs `votes=1`. Small n — directional. |
 | Aggregate, don't select | `aggregate_reviews` combines votes: conservative majority verdict, **unioned** next-actions, averaged score — it does not just pick one judge's answer. |
 | Layered refinement | The gate's FAIL → continue → re-judge loop is a temporal MoA layer: each round refines against the prior critique. |
 | Honesty: mixing isn't free or always better | Voting/aggregation are **opt-in** (default 1 sample). Telemetry (`metrics.jsonl`, `/cost`) makes the added cost visible so fusion is used deliberately. |

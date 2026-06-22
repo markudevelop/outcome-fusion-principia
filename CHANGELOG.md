@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.3
+
+### Added
+- **Voting A/B harness** (`eval/ab_voting.py`) — runs the scenarios through the
+  exact gate at `GATE_VOTES=1` vs `3` (streaming; `OF_AB_GOOD_ONLY`,
+  `OF_AB_TRIALS`). First measured result: `votes=3` cut false-blocks on
+  genuinely-done work from **2/5 → 0/5** vs `votes=1`, with defect catch
+  unaffected — directional support for perspective-diverse voting (small n).
+  Recommendation documented: default stays `1`; use `3` for higher-stakes turns.
+
 ## 0.5.2
 
 ### Fixed
