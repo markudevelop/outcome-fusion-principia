@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.1
+
+### Added
+- **Integration test suite** (`tests/test_integration.py`) — the "does it all
+  work together" check. Verifies manifest ↔ files consistency (every command,
+  agent, and skill exists with valid frontmatter), that `hooks.json` only uses
+  valid Claude Code events and references existing scripts, that all scripts
+  compile, and that the full hook pipeline
+  (`compile_prompt` → `capture_tool` → `session_context` → `release_gate`) runs
+  end-to-end **offline** (heuristic fallback) producing the right shared
+  workspace files, with evidence dedup confirmed. 46 tests total; runs in CI.
+
 ## 0.5.0
 
 ### Added

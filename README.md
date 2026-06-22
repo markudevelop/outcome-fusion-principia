@@ -148,10 +148,12 @@ pip install pytest
 python -m pytest -q
 ```
 
-The suite covers the pure helpers plus regression locks for the brace-safe
-prompt formatter, JSON-parse robustness, and the lazy-detection scoping. CI runs
-it on every push. Tests live with the plugin at
-`plugins/outcome-fusion-principia/tests/`.
+The suite (46 tests) covers the pure helpers, regression locks for the
+brace-safe formatter / JSON-parse robustness / lazy-detection scoping, and an
+**integration suite** (`test_integration.py`) that verifies the whole plugin is
+internally consistent (manifest ↔ files, valid hook events) and that the hooks
+run together end-to-end offline. CI runs it on every push. Tests live with the
+plugin at `plugins/outcome-fusion-principia/tests/`.
 
 ---
 
