@@ -20,6 +20,78 @@ MIT licensed. See [`LICENSE`](LICENSE) and [`CHANGELOG.md`](CHANGELOG.md).
   guard was never wired into the hooks; the sections below referencing risk
   modes are retained only as history.
 
+## How it works (in one minute)
+
+Outcome Fusion Principia is a local Claude Code plugin that wraps your coding
+session in a scientific operating loop, powered by DeepSeek. It runs entirely
+through Claude Code hooks — no changes to your code or workflow:
+
+1. **You type a prompt.** A `UserPromptSubmit` hook sends it to DeepSeek, which
+   rewrites it into a precise *mission* (objective, constraints, hypotheses,
+   verification plan, release criteria). The rewrite is printed in your terminal
+   and added to Claude's context — **your original prompt is never replaced.**
+2. **Claude works.** `PostToolUse` hooks log every command and auto-record
+   verification commands (tests, lint, builds) into a per-session **proof
+   ledger**.
+3. **Claude tries to stop.** A `Stop` hook runs the **release gate**: DeepSeek
+   judges the mission, git diff, transcript, tool log, and proof ledger, then
+   returns `PASS` / `FAIL` / `BLOCKED`. A weak result pushes Claude to keep
+   going with concrete next actions instead of stopping early.
+4. **Completion closure.** Before `PASS`, the gate runs the audit you'd trigger
+   by asking *"anything else?"* — if it would reveal missed work, it fails now.
+5. **Session isolation + resume.** Every conversation gets its own workspace
+   under `.ai/outcome_fusion/sessions/<id>/`, reconnected on `/resume`.
+
+```
+prompt ──▶ [DeepSeek mission compiler] ──▶ Claude works ──▶ [DeepSeek release gate]
+              shown in terminal              proof ledger        PASS / FAIL / BLOCKED
+```
+
+## Install from GitHub
+
+```text
+/plugin marketplace add newgene11/outcome-fusion-principia
+/plugin install outcome-fusion-principia@outcome-fusion-local
+```
+
+Then set your DeepSeek key (the plugin also accepts `ANTHROPIC_API_KEY` /
+`ANTHROPIC_AUTH_TOKEN` against an Anthropic-compatible endpoint):
+
+```bash
+export DEEPSEEK_API_KEY="your_key_here"
+export OUTCOME_FUSION_MODEL="deepseek-v4-pro"   # optional
+```
+
+Without a key (or if DeepSeek is unreachable) the plugin degrades gracefully to
+a built-in heuristic mission and gate — it never blocks your session.
+
+## Testing
+
+Pure helpers and the two v0.3.7 regression fixes are covered by `pytest`:
+
+```bash
+pip install pytest
+python -m pytest -q
+```
+
+CI runs the suite on every push (`.github/workflows/tests.yml`).
+
+## Configuration reference
+
+| Env var | Default | Effect |
+|---------|---------|--------|
+| `DEEPSEEK_API_KEY` | — | API key (falls back to `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN`) |
+| `OUTCOME_FUSION_ENABLED` | `1` | Master switch for all hooks |
+| `OUTCOME_FUSION_MODEL` | `deepseek-v4-pro` | Model id |
+| `OUTCOME_FUSION_SHOW_MISSION` | `1` | Print the rewritten mission in the terminal |
+| `OUTCOME_FUSION_SHOW_MISSION_CHARS` | `4000` | Max chars of mission shown |
+| `OUTCOME_FUSION_TERMINAL_LOG` | `1` | Show compact terminal status lines |
+| `OUTCOME_FUSION_RETRIES` | `1` | DeepSeek retries on transient errors |
+| `OUTCOME_FUSION_MAX_CONTINUES` | `5` | Max forced continuations before manual review |
+| `OUTCOME_FUSION_EFFORT` | `high` | Reasoning effort sent to the model |
+
+Add `nofusion` anywhere in a prompt to skip the compiler for that turn.
+
 # Outcome Fusion Principia Operator v3.6
 
 Session scoped and resume aware. Each Claude Code conversation gets its own folder under `.ai/outcome_fusion/sessions/<session>/`, so multiple tasks in the same repo do not overwrite each other. On `/resume`, the SessionStart hook reloads the same mission, proof ledger, review, closure, and tool log when Claude provides the same session id or transcript path.
