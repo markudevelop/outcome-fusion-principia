@@ -1,0 +1,7 @@
+# Normalize line endings. Shell scripts and Python hooks run under bash/python
+# on Linux VMs and macOS; CRLF breaks shebang lines, so force LF.
+* text=auto eol=lf
+*.sh   text eol=lf
+*.py   text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
