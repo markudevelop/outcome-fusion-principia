@@ -80,6 +80,8 @@ The key also resolves from `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` against
 | `OUTCOME_FUSION_SHOW_MISSION_CHARS` | `4000` | Max chars of mission shown |
 | `OUTCOME_FUSION_TERMINAL_LOG` | `1` | Show compact terminal status lines |
 | `OUTCOME_FUSION_RETRIES` | `1` | DeepSeek retries on a transient error |
+| `OUTCOME_FUSION_GATE_VOTES` | `1` | Judge polls for self-consistency; majority verdict (>1 = more reliable, more cost) |
+| `OUTCOME_FUSION_JSON_RETRIES` | `1` | Re-asks the judge once if its JSON does not parse |
 | `OUTCOME_FUSION_MAX_CONTINUES` | `5` | Max forced continuations before manual review |
 | `OUTCOME_FUSION_EFFORT` | `high` | Reasoning effort sent to the model |
 
@@ -97,11 +99,26 @@ Add `nofusion` anywhere in a prompt to skip the compiler for that turn.
 | `/status` | Show the active session's mission, blocker, evidence, next test |
 | `/reset` | Archive/clear the active session workspace (keeps project memory) |
 
-**Skills** — `principia` (general first-principles execution) and
-`quant-scientist` (trading/quant claims: leakage, costs, capacity, walk-forward).
+**Skills** — `principia` (general first-principles execution), `quant-scientist`
+(trading/quant claims: leakage, costs, capacity, walk-forward), and
+`research-scientist` (research, factual, writing, and analytical claims: sources,
+citations, cross-checks).
 
 **Agents** — `first-principles-skeptic`, `verification-scientist`, `simplifier`,
-`quant-research-auditor`.
+`quant-research-auditor`, and `evidence-auditor` (sourcing/accuracy/completeness
+of non-code work).
+
+---
+
+## Universal scope
+
+The loop is not code-only. The mission compiler and the judge are told the task
+may be **engineering, research, writing, analysis, factual Q&A, planning, or a
+decision**, and to apply the same standard with task-appropriate evidence: code →
+builds/tests/runs; research/factual → sources, citations, calculations,
+cross-checks; writing/analysis → the stated requirements and accuracy. It never
+demands a git diff or tests for a non-code task. (See the `generic` set in the
+eval for measured proof.)
 
 ---
 
@@ -115,6 +132,7 @@ Add `nofusion` anywhere in a prompt to skip the compiler for that turn.
 .ai/outcome_fusion/sessions/<id>/review.md
 .ai/outcome_fusion/sessions/<id>/closure.md
 .ai/outcome_fusion/sessions/<id>/tool_log.md
+.ai/outcome_fusion/sessions/<id>/metrics.jsonl     # per-call tokens + latency
 ```
 
 Session folders are the source of truth; `latest_*.md` mirrors are written at the
@@ -145,15 +163,18 @@ with planted release-critical defects — and measures how many defects the gate
 catches versus the no-plugin baseline (which catches 0, since an agent stops the
 moment it says "done").
 
-Latest run (DeepSeek judge, 8 scenarios):
+Latest run (DeepSeek judge), defects caught vs. the no-plugin baseline of 0:
 
-| Metric | Without plugin | With plugin |
-|--------|----------------|-------------|
-| Defective completions caught | 0 / 5 | **5 / 5** |
-| Genuinely-done handled correctly | all ship blindly | **3 / 3** (0 false-blocks) |
+| Domain | Defects caught | Good handled |
+|--------|----------------|--------------|
+| Engineering (code) | **5 / 5** | 3 / 3 |
+| Generic (research/factual/analysis) | **3 / 3** | 2 / 2 |
 
-Small, synthetic sample — a demonstration of the gate's discrimination, not an
-end-to-end task-success benchmark. See the eval README for method and caveats.
+The generic row is the proof the gate is universal — it catches a wrong fact, an
+unsourced overclaim, and an answer that ignores the question, with no code in
+sight. Small, synthetic sample — a demonstration of the gate's discrimination,
+not an end-to-end task-success benchmark. See the eval README for method, the
+`OF_EVAL_DOMAIN` filter, and the planned task-success A/B.
 
 ---
 

@@ -1,7 +1,7 @@
 {
   "name": "outcome-fusion-principia",
   "displayName": "Outcome Fusion Principia Operator",
-  "version": "0.3.9",
+  "version": "0.4.0",
   "description": "Session scoped first principles operator with resume-aware mission/proof/review files, a visible DeepSeek prompt rewrite, terminal verdicts, a working scientific release gate, and completion closure.",
   "author": {
     "name": "Mark"
@@ -26,6 +26,7 @@
     "./agents/first-principles-skeptic.md",
     "./agents/verification-scientist.md",
     "./agents/simplifier.md",
-    "./agents/quant-research-auditor.md"
+    "./agents/quant-research-auditor.md",
+    "./agents/evidence-auditor.md"
   ]
 }

@@ -16,6 +16,9 @@ PLUGIN_SLUG = "outcome_fusion"
 DEFAULT_MODEL = "deepseek-v4-pro"
 DEFAULT_BASE_URL = "https://api.deepseek.com/anthropic"
 
+# Usage/latency of the most recent successful DeepSeek call, for cost telemetry.
+_LAST_CALL: dict[str, Any] = {}
+
 LAZY_IMPOSSIBLE_PATTERNS = [
     r"\bimpossible\b",
     r"\bnot possible\b",
@@ -495,10 +498,17 @@ def call_deepseek(system: str, user: str, *, max_tokens: int = 4000, temperature
     # total wall time stays inside the hook timeout budget.
     retries = max(0, env_int("OUTCOME_FUSION_RETRIES", 1))
     last_err: Exception | None = None
+    t0 = time.time()
     for attempt in range(retries + 1):
         try:
             with urlopen(req, timeout=timeout) as r:
                 data = json.loads(r.read().decode("utf-8"))
+                global _LAST_CALL
+                _LAST_CALL = {
+                    "model": body.get("model"),
+                    "usage": data.get("usage") or {},
+                    "latency_ms": int((time.time() - t0) * 1000),
+                }
                 return extract_text_from_anthropic_response(data).strip()
         except HTTPError as e:
             detail = e.read().decode("utf-8", errors="ignore")[:2000]
@@ -547,6 +557,69 @@ def call_deepseek_json(
             return data, raw
         prompt = user + "\n\nReturn ONLY a single valid JSON object containing every required key. No prose, no markdown fences, no trailing text."
     return data, raw
+
+
+def last_call_metric() -> dict[str, Any]:
+    return dict(_LAST_CALL)
+
+
+def log_metric(wdir: Path, label: str, extra: dict[str, Any] | None = None) -> None:
+    """Append one cost/latency record (tokens + ms) for the last DeepSeek call."""
+    m = last_call_metric()
+    usage = m.get("usage") or {}
+    record = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "label": label,
+        "model": m.get("model"),
+        "input_tokens": usage.get("input_tokens"),
+        "output_tokens": usage.get("output_tokens"),
+        "latency_ms": m.get("latency_ms"),
+    }
+    if extra:
+        record.update(extra)
+    try:
+        safe_append(wdir / "metrics.jsonl", json.dumps(record, ensure_ascii=False) + "\n", max_chars=200000)
+    except Exception:
+        pass
+
+
+def aggregate_reviews(reviews: list[dict[str, Any]]) -> dict[str, Any]:
+    """Combine N independent judge verdicts by self-consistency (majority).
+
+    Ties or any BLOCKED resolve conservatively (do not PASS on a split). The
+    returned review keeps the worst-case blocker and unions the action lists so
+    nothing a single judge flagged is lost.
+    """
+    reviews = [r for r in reviews if isinstance(r, dict) and r.get("verdict")]
+    if not reviews:
+        return {}
+    if len(reviews) == 1:
+        return reviews[0]
+    verdicts = [str(r.get("verdict", "")).upper() for r in reviews]
+    counts = {v: verdicts.count(v) for v in set(verdicts)}
+    n = len(verdicts)
+    # PASS only with a strict majority of PASS and no BLOCKED present.
+    if counts.get("PASS", 0) > n / 2 and "BLOCKED" not in verdicts:
+        winner = "PASS"
+    elif "BLOCKED" in verdicts and counts.get("PASS", 0) <= n / 2:
+        winner = "BLOCKED"
+    else:
+        winner = "FAIL"
+    base = next((r for r in reviews if str(r.get("verdict", "")).upper() == winner), reviews[0])
+    merged = dict(base)
+    merged["verdict"] = winner
+    merged["votes"] = counts
+    scores = [r.get("progress_score") for r in reviews if isinstance(r.get("progress_score"), (int, float))]
+    if scores:
+        merged["progress_score"] = round(sum(scores) / len(scores))
+    actions: list[str] = []
+    for r in reviews:
+        for a in (r.get("next_actions") or []):
+            if a not in actions:
+                actions.append(a)
+    if actions:
+        merged["next_actions"] = actions
+    return merged
 
 
 def git_status_and_diff(cwd: Path) -> tuple[str, str, str]:

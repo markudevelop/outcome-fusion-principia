@@ -130,6 +130,43 @@ def test_call_deepseek_json_no_retry_when_first_parses(monkeypatch):
     assert calls["n"] == 1  # no wasted call in the common case
 
 
+def test_aggregate_reviews_single_passthrough():
+    r = {"verdict": "PASS", "progress_score": 90}
+    assert common.aggregate_reviews([r]) == r
+
+
+def test_aggregate_reviews_majority_pass():
+    out = common.aggregate_reviews([
+        {"verdict": "PASS", "progress_score": 90},
+        {"verdict": "PASS", "progress_score": 80},
+        {"verdict": "FAIL", "progress_score": 30},
+    ])
+    assert out["verdict"] == "PASS"
+    assert out["votes"] == {"PASS": 2, "FAIL": 1}
+
+
+def test_aggregate_reviews_split_is_conservative_fail():
+    out = common.aggregate_reviews([
+        {"verdict": "PASS"}, {"verdict": "FAIL"}, {"verdict": "FAIL"},
+    ])
+    assert out["verdict"] == "FAIL"
+
+
+def test_aggregate_reviews_blocked_without_pass_majority():
+    out = common.aggregate_reviews([
+        {"verdict": "BLOCKED"}, {"verdict": "FAIL"}, {"verdict": "PASS"},
+    ])
+    assert out["verdict"] == "BLOCKED"
+
+
+def test_aggregate_reviews_unions_next_actions():
+    out = common.aggregate_reviews([
+        {"verdict": "FAIL", "next_actions": ["a", "b"]},
+        {"verdict": "FAIL", "next_actions": ["b", "c"]},
+    ])
+    assert out["next_actions"] == ["a", "b", "c"]
+
+
 def test_session_key_is_stable_and_prefixed(tmp_path):
     key1 = common.session_key_from_payload({"session_id": "abc-123"}, tmp_path)
     key2 = common.session_key_from_payload({"session_id": "abc-123"}, tmp_path)

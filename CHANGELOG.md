@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.0
+
+### Added
+- **Universal scope.** The mission compiler and the release gate now explicitly
+  handle any task — engineering, research, writing, analysis, factual Q&A,
+  planning — and judge with task-appropriate evidence (sources/citations/
+  cross-checks for non-code work) instead of demanding a git diff or tests.
+  Measured: the eval's `generic` set catches a wrong fact, an unsourced
+  overclaim, and an incomplete answer (3/3) while passing good answers (2/2).
+- **`research-scientist` skill** and **`evidence-auditor` agent** for non-code
+  claims (sourcing, accuracy, completeness, counter-evidence).
+- **Self-consistency voting.** `OUTCOME_FUSION_GATE_VOTES > 1` polls the judge N
+  times and takes the majority verdict (ties/BLOCKED resolve conservatively),
+  reducing run-to-run variance. Default 1.
+- **Cost/latency telemetry.** Each DeepSeek call's tokens and latency are written
+  to `metrics.jsonl` in the session workspace.
+- **Generic eval scenarios + `OF_EVAL_DOMAIN` filter**, and a secret-gated
+  `eval` CI workflow. A task-success A/B protocol is documented as the next step.
+
 ## 0.3.9
 
 ### Fixed

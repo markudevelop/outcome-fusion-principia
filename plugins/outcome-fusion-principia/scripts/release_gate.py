@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from common import (
+    aggregate_reviews,
     append_memory,
     call_deepseek_json,
     contains_lazy_impossible,
@@ -13,6 +14,7 @@ from common import (
     git_status_and_diff,
     json_stdout,
     load_state,
+    log_metric,
     make_state_path,
     project_signals,
     read_stdin_json,
@@ -40,6 +42,7 @@ Doctrine:
 6. Release ready beats chat ready.
 7. If the same failed path repeats, require a different strategy.
 8. Completion closure: before PASS, run the exact audit the user would trigger by asking “is there anything else?” If that audit would reveal release critical missed work, verdict must be FAIL now. Do not save missed work for later.
+9. Universal scope: the task may be engineering, research, writing, analysis, factual question answering, planning, or decision support. Apply the SAME standard with task-appropriate evidence. For code: build, tests, runs, inspection. For research or factual claims: sources, citations, calculations, cross-checks, and self-consistency. For writing or analysis: does it actually meet the stated requirement, is it accurate, is it complete. NEVER demand code, tests, or a git diff for a task that is not about code; judge it on the evidence that fits its kind. An unsupported factual claim, a missing citation, or an unmet requirement is just as much a FAIL as untested code.
 
 Return compact valid JSON only.
 """.strip()
@@ -209,31 +212,39 @@ def main() -> int:
         "max_continues": max_continues,
     }
 
+    rendered = safe_format(
+        PROMPT,
+        mission=mission,
+        last_message=last_message,
+        transcript=transcript,
+        signals=signals,
+        git_status=git_status,
+        diff_hash=diff_hash,
+        git_diff=git_diff,
+        proof=proof,
+        tool_log=tool_log,
+        loop_state=json.dumps(loop_state, ensure_ascii=False),
+        lazy_impossible=str(lazy),
+    )
+    # Self-consistency: poll the judge N times and take the majority verdict.
+    # Default 1 (cheapest). >1 trades cost for a more reliable verdict; use a
+    # little temperature so the votes are independent rather than identical.
+    votes = max(1, env_int("OUTCOME_FUSION_GATE_VOTES", 1))
+    vote_temp = 0.1 if votes == 1 else 0.4
     try:
-        review, raw = call_deepseek_json(
-            SYSTEM,
-            safe_format(
-                PROMPT,
-                mission=mission,
-                last_message=last_message,
-                transcript=transcript,
-                signals=signals,
-                git_status=git_status,
-                diff_hash=diff_hash,
-                git_diff=git_diff,
-                proof=proof,
-                tool_log=tool_log,
-                loop_state=json.dumps(loop_state, ensure_ascii=False),
-                lazy_impossible=str(lazy),
-            ),
-            max_tokens=4200,
-            temperature=0.1,
-            timeout=170,
-            require_keys=["verdict"],
-        )
-        if not review:
-            review = fallback_review(mission, proof, tool_log, lazy)
-        safe_write(wdir / "review.md", raw if raw.strip() else json.dumps(review, indent=2))
+        reviews: list[dict] = []
+        last_raw = ""
+        for _ in range(votes):
+            one, raw = call_deepseek_json(
+                SYSTEM, rendered, max_tokens=4200, temperature=vote_temp, timeout=170, require_keys=["verdict"]
+            )
+            log_metric(wdir, "release_gate", {"verdict": str((one or {}).get("verdict", "")).upper() or None})
+            if one:
+                reviews.append(one)
+            if raw.strip():
+                last_raw = raw
+        review = aggregate_reviews(reviews) or fallback_review(mission, proof, tool_log, lazy)
+        safe_write(wdir / "review.md", last_raw if last_raw.strip() else json.dumps(review, indent=2))
         mirror_latest(wdir, "review.md")
     except Exception as e:
         review = fallback_review(mission, proof, tool_log, lazy)

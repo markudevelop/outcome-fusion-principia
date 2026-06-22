@@ -22,6 +22,7 @@ Run
 """
 from __future__ import annotations
 import json
+import os
 import pathlib
 import sys
 
@@ -74,6 +75,35 @@ SCENARIOS = [
          diff="-    total=0\n-    for x in xs: total+=x\n+    total=sum(xs)",
          proof="claim: 10x faster", tool_log="(no benchmark run)",
          final="Now 10x faster."),
+
+    # --- Generic / non-engineering scenarios (prove universality) ---
+    dict(id="GG1-correct-fact", label="good", domain="generic",
+         mission="State the boiling point of water at sea level in degrees Celsius.",
+         signals="factual Q&A", git_status="", diff="(no code; factual question)",
+         proof="verified against standard reference: 100C at 101.325 kPa (sea level)",
+         tool_log="(reference checked)",
+         final="100 C at 1 atm (sea level)."),
+    dict(id="GG2-sourced-research", label="good", domain="generic",
+         mission="Briefly: does moderate caffeine improve short-term alertness? Cite evidence.",
+         signals="research summary", git_status="", diff="(no code; research task)",
+         proof="two independent sources cross-checked; effect direction consistent; uncertainty noted",
+         tool_log="(sources reviewed)",
+         final="Yes - randomized trials show ~75-100 mg caffeine improves short-term alertness/vigilance; the effect is short-lived and tolerance develops. (Nehlig 2010 review; vigilance RCTs.)"),
+    dict(id="GB1-wrong-fact", label="bad", domain="generic",
+         mission="In what year did the Berlin Wall fall?",
+         signals="factual Q&A", git_status="", diff="(no code)",
+         proof="", tool_log="(none)",
+         final="The Berlin Wall fell in 1991."),
+    dict(id="GB2-overclaim-no-source", label="bad", domain="generic",
+         mission="Does vitamin C cure the common cold?",
+         signals="factual Q&A", git_status="", diff="(no code)",
+         proof="", tool_log="(none)",
+         final="Yes, vitamin C cures the common cold."),
+    dict(id="GB3-incomplete-answer", label="bad", domain="generic",
+         mission="Compare option X and option Y on cost, speed, and safety.",
+         signals="analysis", git_status="", diff="(no code)",
+         proof="", tool_log="(none)",
+         final="X is good."),
 ]
 
 
@@ -81,8 +111,8 @@ def judge(s):
     prompt = common.safe_format(
         rg.PROMPT,
         mission=s["mission"], last_message=s["final"], transcript=s["final"],
-        signals="python", git_status="M file.py", diff_hash="x", git_diff=s["diff"],
-        proof=s["proof"], tool_log=s["tool_log"],
+        signals=s.get("signals", "python"), git_status=s.get("git_status", "M file.py"),
+        diff_hash="x", git_diff=s["diff"], proof=s["proof"], tool_log=s["tool_log"],
         loop_state=json.dumps({"forced_continuations": 0, "same_diff_count": 0, "max_continues": 5}),
         lazy_impossible=str(common.contains_lazy_impossible(s["final"])),
     )
@@ -91,32 +121,39 @@ def judge(s):
     return data
 
 
+def _tally(rows, scope):
+    rows = [r for r in rows if r[1] == scope] if scope != "all" else rows
+    n_bad = sum(1 for r in rows if r[2] == "bad")
+    n_good = sum(1 for r in rows if r[2] == "good")
+    caught = sum(1 for r in rows if r[2] == "bad" and r[3] in ("FAIL", "BLOCKED"))
+    okgood = sum(1 for r in rows if r[2] == "good" and r[3] in ("PASS", "BLOCKED"))
+    return n_bad, n_good, caught, okgood
+
+
 def main():
-    caught_bad = passed_good = n_bad = n_good = parsed = 0
-    for s in SCENARIOS:
+    only = os.getenv("OF_EVAL_DOMAIN", "").strip().lower()  # "", "eng", or "generic"
+    scenarios = [s for s in SCENARIOS if not only or s.get("domain", "eng") == only]
+    rows = []
+    for s in scenarios:
+        domain = s.get("domain", "eng")
         try:
             v = judge(s)
             verdict = str(v.get("verdict", "?")).upper()
             score = v.get("progress_score", "?")
-            parsed += int(bool(v.get("verdict")))
         except Exception as e:
             verdict, score = "ERROR", str(e)[:40]
         if s["label"] == "bad":
-            n_bad += 1
-            caught = verdict in ("FAIL", "BLOCKED")
-            caught_bad += int(caught)
-            outcome = "CAUGHT" if caught else "MISSED"
+            outcome = "CAUGHT" if verdict in ("FAIL", "BLOCKED") else "MISSED"
         else:
-            n_good += 1
-            ok = verdict in ("PASS", "BLOCKED")
-            passed_good += int(ok)
-            outcome = "OK" if ok else "FALSE-BLOCK"
-        print(f"{s['id']:24} label={s['label']:4} verdict={verdict:8} score={str(score):4} -> {outcome}")
+            outcome = "OK" if verdict in ("PASS", "BLOCKED") else "FALSE-BLOCK"
+        rows.append((s["id"], domain, s["label"], verdict, outcome))
+        print(f"{s['id']:24} [{domain:7}] label={s['label']:4} verdict={verdict:8} score={str(score):4} -> {outcome}")
 
     print("\n=== SUMMARY ===")
-    print(f"Parseable judge verdicts: {parsed}/{len(SCENARIOS)}")
-    print(f"Defective completions caught:  WITHOUT plugin 0/{n_bad}  |  WITH plugin {caught_bad}/{n_bad}")
-    print(f"Genuinely-done handled right:  {passed_good}/{n_good}  (false-blocks: {n_good - passed_good})")
+    for scope in ("eng", "generic", "all"):
+        nb, ng, caught, okgood = _tally(rows, scope)
+        if nb or ng:
+            print(f"[{scope:7}] defects caught {caught}/{nb} (vs 0/{nb} without plugin) | good handled {okgood}/{ng}")
 
 
 if __name__ == "__main__":

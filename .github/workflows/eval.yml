@@ -1,0 +1,26 @@
+name: eval
+
+# Live gate-discrimination benchmark. Needs a DEEPSEEK_API_KEY repo secret;
+# skips gracefully when it is absent (e.g. on forks).
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  gate-eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Run release-gate eval
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          if [ -z "$DEEPSEEK_API_KEY" ]; then
+            echo "No DEEPSEEK_API_KEY secret configured; skipping live eval."
+            exit 0
+          fi
+          python plugins/outcome-fusion-principia/eval/run_eval.py

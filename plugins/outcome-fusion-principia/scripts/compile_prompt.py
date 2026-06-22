@@ -8,6 +8,7 @@ from common import (
     env_bool,
     env_int,
     json_stdout,
+    log_metric,
     project_signals,
     combined_memory,
     mirror_latest,
@@ -27,6 +28,7 @@ Use first principles, falsification, simplification, evidence, and release readi
 The user wants autonomous progress, not low value clarification questions.
 Do not ask the user low value questions. Make reversible assumptions, execute, verify, and report. Only stop for true blockers that cannot be resolved inside the local repo.
 You are allowed to be imaginative, but every imaginative path must connect to a test, inspection, calculation, backtest, source, or proof.
+The task may be anything: engineering, research, writing, analysis, factual question answering, planning, or a decision. The mission must fit the task. Choose evidence that fits its kind: code uses builds/tests/runs; research and factual work use sources, citations, calculations, and cross-checks; writing and analysis use the stated requirements and accuracy. Do not force code, tests, or repo steps onto a task that is not about code.
 Return clean Markdown only.
 """.strip()
 
@@ -153,6 +155,7 @@ PROOF LEDGER:
             temperature=0.2,
             timeout=110,
         )
+        log_metric(wdir, "mission_compile")
     except Exception as e:
         mission = default_mission(prompt, cwd)
         safe_write(wdir / "last_error.txt", f"compile_prompt fallback: {e}\n")
