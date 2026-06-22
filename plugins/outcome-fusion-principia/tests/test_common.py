@@ -212,6 +212,20 @@ def test_json_stdout_handles_unicode_without_crashing(capfd):
     assert json.loads(out)["systemMessage"] == "arrow ↔ ok"
 
 
+def test_continue_decision_autocontinue_blocks_stop():
+    out = common.continue_decision("keep going", True)
+    assert out["decision"] == "block"
+    assert out["reason"] == "keep going"
+    assert out["suppressOutput"] is True
+
+
+def test_continue_decision_nonblocking_uses_additional_context():
+    out = common.continue_decision("fyi", False)
+    assert "decision" not in out
+    assert out["hookSpecificOutput"]["hookEventName"] == "Stop"
+    assert out["hookSpecificOutput"]["additionalContext"] == "fyi"
+
+
 def test_vote_lenses_are_distinct_and_cycle():
     assert common.vote_lenses(1) == [""]
     three = common.vote_lenses(3)

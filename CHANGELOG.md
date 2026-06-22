@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.0
+
+### Changed
+- **Default `OUTCOME_FUSION_GATE_VOTES` is now `3`** (was `1`). The A/B
+  (`eval/ab_voting.py`) showed a single judge sample false-blocks genuinely-done
+  work (2/5) while 3 perspective-diverse votes did not (0/5). Costs 3× judge
+  calls per gate; set `1` for the cheapest single-call gate. (Small-n evidence —
+  honestly noted, but it's the better default.)
+
+### Added
+- **"Stop stopping" / auto-continue.** On a FAIL the gate now forces Claude to
+  keep working **in the same turn** via a Stop-hook `decision: block` (previously
+  it only left non-blocking guidance for the next turn, so you had to re-prompt).
+  Bounded by `OUTCOME_FUSION_MAX_CONTINUES` and the same-diff guard. Disable with
+  `OUTCOME_FUSION_AUTOCONTINUE=0`. New `continue_decision()` helper + 2 tests.
+
 ## 0.5.3
 
 ### Added

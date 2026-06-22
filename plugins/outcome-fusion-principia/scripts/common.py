@@ -68,6 +68,23 @@ def json_stdout(obj: dict[str, Any]) -> None:
         print(json.dumps(obj, ensure_ascii=True))
 
 
+def continue_decision(reason: str, autocontinue: bool) -> dict[str, Any]:
+    """Build the Stop-hook output that keeps Claude working.
+
+    autocontinue=True returns a top-level ``decision: block`` which FORCES Claude
+    to continue in the same turn (no user re-prompt) — this is the "stop
+    stopping" behaviour. autocontinue=False falls back to non-blocking
+    additionalContext (guidance seen next turn). Continuation is still bounded by
+    OUTCOME_FUSION_MAX_CONTINUES in the gate.
+    """
+    if autocontinue:
+        return {"decision": "block", "reason": reason, "suppressOutput": True}
+    return {
+        "hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": reason},
+        "suppressOutput": True,
+    }
+
+
 def env_bool(name: str, default: bool = True) -> bool:
     raw = os.getenv(name)
     if raw is None:

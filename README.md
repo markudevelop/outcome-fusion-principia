@@ -33,8 +33,10 @@ your prompt ─▶ [DeepSeek mission compiler] ─▶ Claude works ─▶ [DeepS
    claim → evidence → method → result → confidence → remaining risk.
 3. **Release gate** (`Stop`) — when Claude tries to finish, DeepSeek judges the
    mission, git diff, transcript, tool log, and proof ledger, returning
-   `PASS` / `FAIL` / `BLOCKED`. A weak result pushes Claude to continue with
-   concrete next actions instead of stopping early.
+   `PASS` / `FAIL` / `BLOCKED`. On a FAIL it **forces Claude to keep working in
+   the same turn** (Stop-hook `decision: block`) with concrete next actions —
+   no re-prompt needed — bounded by `OUTCOME_FUSION_MAX_CONTINUES`. This is the
+   "stop stopping" behaviour; disable with `OUTCOME_FUSION_AUTOCONTINUE=0`.
 4. **Impossibility breaker** — a lazy "this is impossible / can't be done" is met
    with a demand for proof or a falsification test, not accepted at face value.
 5. **Completion closure** — before `PASS`, the gate runs the audit you'd trigger
@@ -80,9 +82,10 @@ The key also resolves from `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` against
 | `OUTCOME_FUSION_SHOW_MISSION_CHARS` | `4000` | Max chars of mission shown |
 | `OUTCOME_FUSION_TERMINAL_LOG` | `1` | Show compact terminal status lines |
 | `OUTCOME_FUSION_RETRIES` | `1` | DeepSeek retries on a transient error |
-| `OUTCOME_FUSION_GATE_VOTES` | `1` | Perspective-diverse judge votes, aggregated to a majority verdict. In a small A/B, `3` cut false-blocks 2/5→0/5 at 3× cost — recommended for higher-stakes turns. See [`docs/MODEL_FUSION.md`](plugins/outcome-fusion-principia/docs/MODEL_FUSION.md) |
+| `OUTCOME_FUSION_GATE_VOTES` | `3` | Perspective-diverse judge votes, aggregated to a majority verdict. Default `3` because the A/B showed `1` false-blocks good work (2/5) and `3` did not (0/5). Set `1` for the cheapest single-call gate. See [`docs/MODEL_FUSION.md`](plugins/outcome-fusion-principia/docs/MODEL_FUSION.md) |
+| `OUTCOME_FUSION_AUTOCONTINUE` | `1` | On a FAIL, force Claude to keep working in the same turn (Stop-hook `decision: block`) instead of waiting for a re-prompt. Set `0` for non-blocking guidance only |
 | `OUTCOME_FUSION_JSON_RETRIES` | `1` | Re-asks the judge once if its JSON does not parse |
-| `OUTCOME_FUSION_MAX_CONTINUES` | `5` | Max forced continuations before manual review |
+| `OUTCOME_FUSION_MAX_CONTINUES` | `5` | Max forced auto-continuations before it stops and asks for manual review |
 | `OUTCOME_FUSION_EFFORT` | `high` | Reasoning effort sent to the model |
 
 Add `nofusion` anywhere in a prompt to skip the compiler for that turn.

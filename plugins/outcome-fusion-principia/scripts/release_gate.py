@@ -8,6 +8,7 @@ from common import (
     append_memory,
     call_deepseek_json,
     contains_lazy_impossible,
+    continue_decision,
     cwd_from_hook,
     env_bool,
     env_int,
@@ -228,9 +229,10 @@ def main() -> int:
         lazy_impossible=str(lazy),
     )
     # Self-consistency: poll the judge N times and take the majority verdict.
-    # Default 1 (cheapest). >1 trades cost for a more reliable verdict; use a
-    # little temperature so the votes are independent rather than identical.
-    votes = max(1, env_int("OUTCOME_FUSION_GATE_VOTES", 1))
+    # Default 3 — the A/B (eval/ab_voting.py) showed 1 sample false-blocks good
+    # work (2/5) while 3 perspective-diverse votes did not (0/5). Set to 1 for
+    # the cheapest single-call gate. Higher = more reliable, more cost.
+    votes = max(1, env_int("OUTCOME_FUSION_GATE_VOTES", 3))
     vote_temp = 0.1 if votes == 1 else 0.4
     lenses = vote_lenses(votes)  # perspective-diverse votes (MoA: diversity drives the gain)
     try:
@@ -338,13 +340,14 @@ Continue now. Do not ask the user for normal engineering choices. Use first prin
 {session_paths_block(wdir)}
 """.strip()
 
-    out = {
-        "hookSpecificOutput": {
-            "hookEventName": "Stop",
-            "additionalContext": feedback + "\n\nVisible terminal instruction: before continuing, print the Outcome Fusion review verdict, blocker, and next actions in the main CLI."
-        },
-        "suppressOutput": True
-    }
+    # "Stop stopping": by default, FAIL forces Claude to continue in the SAME
+    # turn (decision: block) instead of just leaving guidance for next time —
+    # so the agent keeps working until PASS or the continuation cap. Bounded by
+    # OUTCOME_FUSION_MAX_CONTINUES (and the same-diff guard) above. Set
+    # OUTCOME_FUSION_AUTOCONTINUE=0 to revert to non-blocking guidance.
+    autocontinue = env_bool("OUTCOME_FUSION_AUTOCONTINUE", True)
+    reason = feedback + "\n\nContinue now in this same turn without waiting for the user. First print the Outcome Fusion verdict, blocker, and next actions, then keep working."
+    out = continue_decision(reason, autocontinue)
     if terminal_log:
         out["systemMessage"] = terminal_review_message(review, verdict, blocker)
     json_stdout(out)

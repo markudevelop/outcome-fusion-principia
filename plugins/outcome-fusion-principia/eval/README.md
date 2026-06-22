@@ -93,8 +93,8 @@ Perspective-diverse voting removed the false-blocks — as the MoA literature
 predicts, diversity cancels single-sample stochastic errors. Defect catch is
 unaffected (votes=1 already catches 8/8 and aggregation is conservative).
 Trade-off: 3× the judge calls. **n is tiny (5, one trial) — directional, not
-conclusive.** Recommendation: keep the default `votes=1` for cost; set
-`OUTCOME_FUSION_GATE_VOTES=3` for higher-stakes turns.
+conclusive**, but on this evidence the default was changed to
+`OUTCOME_FUSION_GATE_VOTES=3`. Set `1` for the cheapest single-call gate.
 
 ## Planned: task-success A/B
 
