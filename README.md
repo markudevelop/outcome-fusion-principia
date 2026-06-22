@@ -50,7 +50,7 @@ prompt ──▶ [DeepSeek mission compiler] ──▶ Claude works ──▶ [D
 ## Install from GitHub
 
 ```text
-/plugin marketplace add newgene11/outcome-fusion-principia
+/plugin marketplace add markudevelop/outcome-fusion-principia
 /plugin install outcome-fusion-principia@outcome-fusion-local
 ```
 
