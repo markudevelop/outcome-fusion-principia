@@ -80,6 +80,9 @@ def _run_hook(script: str, payload: dict, cwd: str, env_extra: dict | None = Non
     return subprocess.run(
         [sys.executable, str(SCRIPTS / script)],
         input=json.dumps(payload), text=True, capture_output=True,
+        # The hooks emit UTF-8 bytes; decode as UTF-8 so the reader thread never
+        # hits a cp1252 UnicodeDecodeError on Windows.
+        encoding="utf-8", errors="replace",
         cwd=str(SCRIPTS), env=env, timeout=60,
     )
 

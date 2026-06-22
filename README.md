@@ -201,6 +201,12 @@ Then install `outcome-fusion-principia@outcome-fusion` and use `/reload-plugins`
 
 See [`CHANGELOG.md`](CHANGELOG.md) for version history.
 
+## Security & privacy
+
+The plugin sends context (prompt, git diff, recent transcript, proof) to DeepSeek
+to compile missions and judge work; secrets are redacted best-effort first. See
+[`SECURITY.md`](SECURITY.md) for exactly what is sent and how to disable it.
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
