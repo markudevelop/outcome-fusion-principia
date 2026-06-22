@@ -1,0 +1,14 @@
+{
+  "name": "outcome-fusion-local",
+  "owner": {
+    "name": "Mark"
+  },
+  "plugins": [
+    {
+      "name": "outcome-fusion-principia",
+      "source": "./plugins/outcome-fusion-principia",
+      "description": "Session scoped operator mode with resume-aware DeepSeek mission/proof/review files, a visible prompt rewrite, terminal verdicts, first principles compiler, a working scientific release gate, and completion closure.",
+      "version": "0.3.7"
+    }
+  ]
+}

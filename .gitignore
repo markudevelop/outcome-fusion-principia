@@ -1,0 +1,17 @@
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Local secrets / env
+.env
+.env.*
+
+# Per-repo runtime state the plugin writes into projects it runs on
+.ai/outcome_fusion/
