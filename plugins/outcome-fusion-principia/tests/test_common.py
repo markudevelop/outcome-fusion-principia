@@ -1,4 +1,6 @@
 """Unit tests for the pure helpers in common.py."""
+import json
+
 import common
 
 
@@ -200,6 +202,14 @@ def test_evidence_already_recorded(tmp_path):
     (tmp_path / "proof.md").write_text("## Evidence\nClaim checked by command: `pytest -q`\n", encoding="utf-8")
     assert common.evidence_already_recorded(tmp_path, "pytest -q")
     assert not common.evidence_already_recorded(tmp_path, "ruff check .")
+
+
+def test_json_stdout_handles_unicode_without_crashing(capfd):
+    # Regression: a non-ASCII char (an arrow) used to crash the hook on Windows
+    # cp1252 stdout. Output must stay valid JSON and round-trip the character.
+    common.json_stdout({"systemMessage": "arrow ↔ ok"})
+    out = capfd.readouterr().out
+    assert json.loads(out)["systemMessage"] == "arrow ↔ ok"
 
 
 def test_vote_lenses_are_distinct_and_cycle():

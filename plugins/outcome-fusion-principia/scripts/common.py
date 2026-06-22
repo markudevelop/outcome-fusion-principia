@@ -53,7 +53,19 @@ def read_stdin_json() -> dict[str, Any]:
 
 
 def json_stdout(obj: dict[str, Any]) -> None:
-    print(json.dumps(obj, ensure_ascii=False))
+    # Write UTF-8 bytes directly so a non-ASCII char in the payload (e.g. an
+    # arrow the model echoed) can't crash the hook on Windows' cp1252 stdout.
+    # Falls back to ASCII-escaped JSON, which is still valid and encoding-safe.
+    data = json.dumps(obj, ensure_ascii=False)
+    try:
+        buf = getattr(sys.stdout, "buffer", None)
+        if buf is not None:
+            buf.write((data + "\n").encode("utf-8"))
+            buf.flush()
+        else:
+            print(json.dumps(obj, ensure_ascii=True))
+    except Exception:
+        print(json.dumps(obj, ensure_ascii=True))
 
 
 def env_bool(name: str, default: bool = True) -> bool:

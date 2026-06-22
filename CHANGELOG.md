@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.2
+
+### Fixed
+- **Windows hook crash on non-ASCII output.** `json_stdout` printed with the
+  process default encoding, so a single non-ASCII char the model echoed (e.g. an
+  arrow `↔`) raised `UnicodeEncodeError` on Windows cp1252 stdout and killed the
+  Stop hook. It now writes UTF-8 bytes directly with an ASCII-escaped fallback.
+  Verified under a simulated cp1252 stdout; covered by a regression test.
+
 ## 0.5.1
 
 ### Added
