@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0
+
+### Added
+- **Model-fusion principles, applied** (see
+  [`docs/MODEL_FUSION.md`](plugins/outcome-fusion-principia/docs/MODEL_FUSION.md)).
+  Researched the Mixture-of-Agents / LLM-ensemble literature and applied the
+  parts that fit a hosted-API plugin:
+  - **Perspective-diverse voting.** With `OUTCOME_FUSION_GATE_VOTES>1`, the judge
+    samples are no longer identical re-rolls — each gets a distinct lens
+    (evidence, completeness, simplicity, correctness). Diversity of independent
+    attempts is what the research says drives the gain (incl. the self-MoA
+    finding that perspective diversity matters more than vendor diversity).
+  - When voting, the **aggregated** review (with the vote breakdown) is written
+    to `review.md` for auditability.
+
+  Documented but deliberately not shipped on-by-default: a full MoA aggregator
+  pass (extra cost) and weight-merging/knowledge-fusion (impossible vs hosted
+  models). Honesty note in the doc: no public evidence ties any specific
+  frontier model to this technique; we apply the principles, not a vendor recipe.
+
 ## 0.4.1
 
 ### Added

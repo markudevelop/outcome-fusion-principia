@@ -17,6 +17,7 @@ from common import (
     log_metric,
     make_state_path,
     project_signals,
+    vote_lenses,
     read_stdin_json,
     recent_transcript_text,
     safe_format,
@@ -231,12 +232,14 @@ def main() -> int:
     # little temperature so the votes are independent rather than identical.
     votes = max(1, env_int("OUTCOME_FUSION_GATE_VOTES", 1))
     vote_temp = 0.1 if votes == 1 else 0.4
+    lenses = vote_lenses(votes)  # perspective-diverse votes (MoA: diversity drives the gain)
     try:
         reviews: list[dict] = []
         last_raw = ""
-        for _ in range(votes):
+        for i in range(votes):
+            prompt_i = rendered if not lenses[i] else rendered + "\n\n" + lenses[i]
             one, raw = call_deepseek_json(
-                SYSTEM, rendered, max_tokens=4200, temperature=vote_temp, timeout=170, require_keys=["verdict"]
+                SYSTEM, prompt_i, max_tokens=4200, temperature=vote_temp, timeout=170, require_keys=["verdict"]
             )
             log_metric(wdir, "release_gate", {"verdict": str((one or {}).get("verdict", "")).upper() or None})
             if one:
@@ -244,7 +247,12 @@ def main() -> int:
             if raw.strip():
                 last_raw = raw
         review = aggregate_reviews(reviews) or fallback_review(mission, proof, tool_log, lazy)
-        safe_write(wdir / "review.md", last_raw if last_raw.strip() else json.dumps(review, indent=2))
+        # When voting, persist the aggregated review (incl. the vote breakdown)
+        # so the decision is auditable; for a single vote keep the raw reply.
+        if votes > 1:
+            safe_write(wdir / "review.md", json.dumps(review, ensure_ascii=False, indent=2))
+        else:
+            safe_write(wdir / "review.md", last_raw if last_raw.strip() else json.dumps(review, indent=2))
         mirror_latest(wdir, "review.md")
     except Exception as e:
         review = fallback_review(mission, proof, tool_log, lazy)

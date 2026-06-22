@@ -202,6 +202,16 @@ def test_evidence_already_recorded(tmp_path):
     assert not common.evidence_already_recorded(tmp_path, "ruff check .")
 
 
+def test_vote_lenses_are_distinct_and_cycle():
+    assert common.vote_lenses(1) == [""]
+    three = common.vote_lenses(3)
+    assert len(three) == 3
+    assert three[0] == ""  # first vote keeps the full doctrine
+    assert len({x for x in three}) == 3  # distinct perspectives
+    assert any("EVIDENCE" in x for x in three)
+    assert len(common.vote_lenses(7)) == 7  # cycles past the lens list
+
+
 def test_aggregate_reviews_single_passthrough():
     r = {"verdict": "PASS", "progress_score": 90}
     assert common.aggregate_reviews([r]) == r

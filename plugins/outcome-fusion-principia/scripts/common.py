@@ -623,6 +623,25 @@ def evidence_already_recorded(wdir: Path, cmd: str) -> bool:
     return f"`{cmd}`" in safe_read(wdir / "proof.md", limit=6000)
 
 
+# Distinct evaluation lenses for self-consistency voting. Diversity of
+# perspective — not re-rolling the same prompt — is what the Mixture-of-Agents
+# literature says drives the gain (see docs/MODEL_FUSION.md).
+GATE_LENSES = [
+    "",  # vote 0: the full doctrine, no extra lens
+    "For this pass, weight EVIDENCE most: is every important claim verified, sourced, tested, or calculated?",
+    "For this pass, weight COMPLETENESS and closure most: what would the user's 'is there anything else?' reveal as missing?",
+    "For this pass, weight SIMPLICITY most: what is unnecessary, overbuilt, or should be removed before adding more?",
+    "For this pass, weight CORRECTNESS most: is anything actually wrong, inaccurate, or broken?",
+]
+
+
+def vote_lenses(n: int) -> list[str]:
+    """Return n distinct judging lenses (cycling) for perspective-diverse voting."""
+    if n <= 1:
+        return [""]
+    return [GATE_LENSES[i % len(GATE_LENSES)] for i in range(n)]
+
+
 def aggregate_reviews(reviews: list[dict[str, Any]]) -> dict[str, Any]:
     """Combine N independent judge verdicts by self-consistency (majority).
 
