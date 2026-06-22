@@ -70,11 +70,13 @@ def test_all_scripts_compile():
 
 # ---- behavioural end-to-end pipeline (offline, heuristic fallback) ----------
 
-def _run_hook(script: str, payload: dict, cwd: str) -> subprocess.CompletedProcess:
+def _run_hook(script: str, payload: dict, cwd: str, env_extra: dict | None = None) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env["OUTCOME_FUSION_ENABLED"] = "1"
     for k in ("DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
         env.pop(k, None)  # force the offline fallback path
+    if env_extra:
+        env.update(env_extra)
     return subprocess.run(
         [sys.executable, str(SCRIPTS / script)],
         input=json.dumps(payload), text=True, capture_output=True,
@@ -112,6 +114,31 @@ def test_hook_pipeline_works_together(tmp_path):
     assert r.returncode == 0, r.stderr
     review = (ws / "review.md").read_text(encoding="utf-8")
     assert '"verdict"' in review
+
+
+def test_release_gate_autocontinue_blocks_on_fail(tmp_path):
+    # Offline -> heuristic FAIL (lazy refusal). With autocontinue on (default),
+    # the Stop hook must emit decision: block to force Claude to keep working.
+    # CLAUDE_PLUGIN_DATA is redirected so the continuation counter starts fresh.
+    cwd = str(tmp_path).replace("\\", "/")
+    ws = tmp_path / ".ai" / "outcome_fusion" / "sessions" / "sid_itest"
+    ws.mkdir(parents=True)
+    (ws / "mission.md").write_text("# Mission\nDo the thing.\n", encoding="utf-8")
+    (ws / "proof.md").write_text("# Proof\n", encoding="utf-8")
+    payload = {"cwd": cwd, "session_id": "itest", "transcript_path": "",
+               "hook_event_name": "Stop",
+               "last_assistant_message": "This is impossible, it cannot be done."}
+    env_extra = {"CLAUDE_PLUGIN_DATA": str(tmp_path / "pdata"), "OUTCOME_FUSION_AUTOCONTINUE": "1"}
+    r = _run_hook("release_gate.py", payload, cwd, env_extra)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout).get("decision") == "block"
+
+    # With autocontinue off, the same FAIL must NOT block (guidance only).
+    env_extra["OUTCOME_FUSION_AUTOCONTINUE"] = "0"
+    r = _run_hook("release_gate.py", payload, cwd, env_extra)
+    out = json.loads(r.stdout)
+    assert out.get("decision") is None
+    assert out["hookSpecificOutput"]["additionalContext"]
 
 
 def test_capture_tool_dedups_repeated_evidence(tmp_path):
