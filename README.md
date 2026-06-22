@@ -130,7 +130,30 @@ python -m pytest -q
 ```
 
 The suite covers the pure helpers plus regression locks for the brace-safe
-prompt formatter and the lazy-detection scoping. CI runs it on every push.
+prompt formatter, JSON-parse robustness, and the lazy-detection scoping. CI runs
+it on every push. Tests live with the plugin at
+`plugins/outcome-fusion-principia/tests/`.
+
+---
+
+## Does it actually help? (evaluation)
+
+A reproducible benchmark ships inside the plugin at
+[`plugins/outcome-fusion-principia/eval/`](plugins/outcome-fusion-principia/eval/).
+It feeds the shipped release gate labelled end-states — some genuinely done, some
+with planted release-critical defects — and measures how many defects the gate
+catches versus the no-plugin baseline (which catches 0, since an agent stops the
+moment it says "done").
+
+Latest run (DeepSeek judge, 8 scenarios):
+
+| Metric | Without plugin | With plugin |
+|--------|----------------|-------------|
+| Defective completions caught | 0 / 5 | **5 / 5** |
+| Genuinely-done handled correctly | all ship blindly | **3 / 3** (0 false-blocks) |
+
+Small, synthetic sample — a demonstration of the gate's discrimination, not an
+end-to-end task-success benchmark. See the eval README for method and caveats.
 
 ---
 

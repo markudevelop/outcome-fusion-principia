@@ -278,20 +278,65 @@ def safe_format(template: str, **values: Any) -> str:
     return out
 
 
+def _balanced_json_spans(text: str) -> list[tuple[int, int]]:
+    """Return (start, end) spans of every top-level balanced {...} block.
+
+    Brace-aware and string-aware so braces inside JSON string values don't throw
+    off the depth count.
+    """
+    spans: list[tuple[int, int]] = []
+    depth = 0
+    start: int | None = None
+    in_str = False
+    escape = False
+    for i, ch in enumerate(text):
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    spans.append((start, i + 1))
+    return spans
+
+
 def parse_json_loose(text: str) -> dict[str, Any]:
+    """Extract a JSON object even when the model prefixes it with reasoning prose.
+
+    Reasoning models (e.g. DeepSeek at high effort) often emit a thinking
+    preamble before the JSON. A greedy ``{.*}`` regex starts at the first brace —
+    which may be a stray brace inside that prose — and fails to parse. Instead we
+    find every balanced top-level object and return the last one that parses
+    (the answer normally comes after the reasoning).
+    """
     if not text:
         return {}
     text = text.strip()
     try:
-        return json.loads(text)
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
     except Exception:
         pass
-    m = re.search(r"\{.*\}", text, re.S)
-    if m:
+    for s, e in reversed(_balanced_json_spans(text)):
         try:
-            return json.loads(m.group(0))
+            obj = json.loads(text[s:e])
+            if isinstance(obj, dict):
+                return obj
         except Exception:
-            return {}
+            continue
     return {}
 
 
@@ -442,6 +487,39 @@ def call_deepseek(system: str, user: str, *, max_tokens: int = 4000, temperature
                 continue
             raise last_err
     raise last_err or RuntimeError("DeepSeek call failed")
+
+
+def call_deepseek_json(
+    system: str,
+    user: str,
+    *,
+    max_tokens: int = 4000,
+    temperature: float = 0.1,
+    timeout: int = 120,
+    require_keys: list[str] | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Call DeepSeek expecting JSON, and retry once if the reply does not parse.
+
+    Without this, a single malformed/truncated JSON reply collapses the gate to
+    the keyword heuristic — a measurably worse judge. One stricter re-ask
+    recovers most parse failures before any fallback. Network errors are left to
+    propagate so the caller's existing fallback handles them.
+
+    Returns (parsed_dict, raw_text); parsed_dict is {} only if both attempts
+    failed to produce the required keys.
+    """
+    require_keys = require_keys or []
+    attempts = max(1, env_int("OUTCOME_FUSION_JSON_RETRIES", 1) + 1)
+    prompt = user
+    raw = ""
+    data: dict[str, Any] = {}
+    for attempt in range(attempts):
+        raw = call_deepseek(system, prompt, max_tokens=max_tokens, temperature=temperature, json_mode=True, timeout=timeout)
+        data = parse_json_loose(raw)
+        if data and all(k in data for k in require_keys):
+            return data, raw
+        prompt = user + "\n\nReturn ONLY a single valid JSON object containing every required key. No prose, no markdown fences, no trailing text."
+    return data, raw
 
 
 def git_status_and_diff(cwd: Path) -> tuple[str, str, str]:

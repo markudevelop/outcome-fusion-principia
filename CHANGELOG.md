@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.8
+
+### Added
+- **`eval/` harness** — a reproducible benchmark of the release gate's
+  discrimination: it feeds the shipped gate labelled end-states (genuinely done
+  vs. planted release-critical defects) and reports how many defects are caught
+  versus the no-plugin baseline of 0. Lives inside the plugin folder at
+  `plugins/outcome-fusion-principia/eval/` so it ships with the plugin.
+
+### Improved
+- **Judge JSON parsing is now deterministic (root-cause fix).** The eval surfaced
+  that the gate intermittently fell back to the keyword heuristic. Inspecting the
+  raw replies showed why: reasoning models emit a *thinking preamble before the
+  JSON*, and the old greedy `{.*}` regex started at the first brace — sometimes a
+  stray brace inside the prose — and failed to parse. `parse_json_loose` now
+  brace-counts (string-aware) and returns the last balanced object that parses,
+  so the verdict is recovered regardless of preamble. This is the fix that moves
+  the number.
+- **Belt-and-suspenders retry (`call_deepseek_json`).** On a still-unparseable or
+  empty reply the gate re-asks once with a stricter "JSON only" instruction
+  before any heuristic fallback (`OUTCOME_FUSION_JSON_RETRIES`, default 1).
+- Both paths are covered by deterministic unit tests (reasoning-preamble parsing,
+  braces-inside-strings, and retry recovery).
+
 ## 0.3.7
 
 ### Fixed

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from common import (
     append_memory,
-    call_deepseek,
+    call_deepseek_json,
     contains_lazy_impossible,
     cwd_from_hook,
     env_bool,
@@ -14,7 +14,6 @@ from common import (
     json_stdout,
     load_state,
     make_state_path,
-    parse_json_loose,
     project_signals,
     read_stdin_json,
     recent_transcript_text,
@@ -211,7 +210,7 @@ def main() -> int:
     }
 
     try:
-        raw = call_deepseek(
+        review, raw = call_deepseek_json(
             SYSTEM,
             safe_format(
                 PROMPT,
@@ -229,10 +228,11 @@ def main() -> int:
             ),
             max_tokens=4200,
             temperature=0.1,
-            json_mode=True,
             timeout=170,
+            require_keys=["verdict"],
         )
-        review = parse_json_loose(raw) or fallback_review(mission, proof, tool_log, lazy)
+        if not review:
+            review = fallback_review(mission, proof, tool_log, lazy)
         safe_write(wdir / "review.md", raw if raw.strip() else json.dumps(review, indent=2))
         mirror_latest(wdir, "review.md")
     except Exception as e:
