@@ -43,23 +43,30 @@ and analytical answers on sourcing, accuracy, and completeness, not on code.
 
 Filter by domain with `OF_EVAL_DOMAIN=eng` or `OF_EVAL_DOMAIN=generic`.
 
-## Result (DeepSeek judge)
+## Result (DeepSeek judge, 13 scenarios)
 
 | Domain | Defects caught (vs 0 without plugin) | Good handled |
 |--------|--------------------------------------|--------------|
-| Engineering | **5 / 5** | 3 / 3 |
+| Engineering | **5 / 5** | 2–3 / 3 |
 | Generic | **3 / 3** | 2 / 2 |
+| **All** | **8 / 8** | 4–5 / 5 |
 
-Defective completions a normal agent would have shipped were each returned with a
-specific blocker; genuinely-done work passed in both domains.
+**Defect catch is the strong, consistent signal: 8/8 across repeated runs** —
+every defective completion a normal agent would have shipped was returned with a
+specific blocker. The cost side is honest: the judge **occasionally false-blocks
+a genuinely-done item** (1 of 5 good cases in one run — a correct bug-fix scored
+60/FAIL — 0 of 5 in another). That is the trade: it reliably catches mistakes, and
+sometimes asks for more on work that was already fine.
 
 ### Caveats
 
-- Small synthetic n; single judge model; verdicts are mildly stochastic.
-  `OUTCOME_FUSION_GATE_VOTES > 1` runs self-consistency voting to reduce variance.
+- Small synthetic n; single judge model; verdicts are mildly stochastic. The
+  false-block above is that variance. `OUTCOME_FUSION_GATE_VOTES > 1` runs
+  perspective-diverse voting to reduce it.
 - On an unrecoverable JSON parse the plugin falls back to the keyword heuristic,
-  which **degrades to "allow stop"** for has-proof / no-refusal states rather than
-  wrongly blocking.
+  which **degrades to "allow stop"** rather than wrongly blocking.
+- This measures **gate discrimination**, not end-to-end task success — see the
+  planned A/B below.
 
 ## Planned: task-success A/B
 

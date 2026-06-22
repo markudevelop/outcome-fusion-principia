@@ -166,18 +166,22 @@ with planted release-critical defects — and measures how many defects the gate
 catches versus the no-plugin baseline (which catches 0, since an agent stops the
 moment it says "done").
 
-Latest run (DeepSeek judge), defects caught vs. the no-plugin baseline of 0:
+Latest run (DeepSeek judge, 13 scenarios), vs. the no-plugin baseline of 0:
 
 | Domain | Defects caught | Good handled |
 |--------|----------------|--------------|
-| Engineering (code) | **5 / 5** | 3 / 3 |
+| Engineering (code) | **5 / 5** | 2–3 / 3 |
 | Generic (research/factual/analysis) | **3 / 3** | 2 / 2 |
+| **All** | **8 / 8** | 4–5 / 5 |
 
-The generic row is the proof the gate is universal — it catches a wrong fact, an
-unsourced overclaim, and an answer that ignores the question, with no code in
-sight. Small, synthetic sample — a demonstration of the gate's discrimination,
-not an end-to-end task-success benchmark. See the eval README for method, the
-`OF_EVAL_DOMAIN` filter, and the planned task-success A/B.
+The strong, repeatable signal is **8/8 defects caught** — completions a normal
+agent would have shipped (a wrong fact, an unsourced overclaim, an answer that
+ignores the question, untested code claimed as done) are each returned with a
+specific blocker. The honest cost: the judge **occasionally false-blocks a
+genuinely-done item** (~1 in 5 good cases in one run, 0 in another) — voting
+(`OUTCOME_FUSION_GATE_VOTES>1`) reduces that variance. This measures the gate's
+discrimination, not end-to-end task success; see the eval README and the planned
+A/B.
 
 ---
 
