@@ -12,6 +12,7 @@ from common import (
     safe_read,
     safe_write,
     session_paths_block,
+    summarize_metrics,
     workspace_dir,
     workspace_root_dir,
 )
@@ -69,13 +70,15 @@ Project/session memory preview:
 Keep using first principles, simplification, verification, and release readiness. Update the session proof ledger, not a global proof file.
 """.strip()
 
+    m = summarize_metrics(wdir)
+    cost = f" | DeepSeek so far: {m['calls']} calls, {m['total_tokens']} tokens" if m["calls"] else ""
     json_stdout({
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
             "additionalContext": context
         },
         "suppressOutput": True,
-        "systemMessage": f"Outcome Fusion context loaded for session {wdir.name}."
+        "systemMessage": f"Outcome Fusion context loaded for session {wdir.name}.{cost}"
     })
     return 0
 

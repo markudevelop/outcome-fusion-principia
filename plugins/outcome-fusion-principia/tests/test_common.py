@@ -130,6 +130,78 @@ def test_call_deepseek_json_no_retry_when_first_parses(monkeypatch):
     assert calls["n"] == 1  # no wasted call in the common case
 
 
+def test_parse_json_loose_handles_markdown_fence():
+    raw = '```json\n{"verdict": "PASS", "n": 3}\n```'
+    assert common.parse_json_loose(raw) == {"verdict": "PASS", "n": 3}
+
+
+def test_parse_json_loose_returns_last_object_after_reasoning():
+    raw = 'first {"draft": true} then final answer {"verdict": "FAIL"}'
+    # Both parse; the last (final) object should win.
+    assert common.parse_json_loose(raw) == {"verdict": "FAIL"}
+
+
+def test_balanced_json_spans_counts_nested_and_multiple():
+    spans = common._balanced_json_spans('a {"x": {"y": 1}} b {"z": 2}')
+    assert len(spans) == 2
+
+
+def test_redact_private_key_block():
+    raw = "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----"
+    assert "PRIVATE_KEY_REDACTED" in common.redact(raw)
+    assert "ghp_<REDACTED>" not in common.redact("clean text")
+
+
+def test_session_key_transcript_fallback_when_no_session_id(tmp_path):
+    key = common.session_key_from_payload({"transcript_path": "/x/y.jsonl"}, tmp_path)
+    assert key.startswith("tx_")
+
+
+def test_call_deepseek_json_returns_empty_after_exhausting_retries(monkeypatch):
+    monkeypatch.setattr(common, "call_deepseek", lambda *a, **k: "never json")
+    data, raw = common.call_deepseek_json("s", "u", require_keys=["verdict"])
+    assert data == {}
+    assert raw == "never json"
+
+
+def test_aggregate_reviews_empty_returns_empty():
+    assert common.aggregate_reviews([]) == {}
+    assert common.aggregate_reviews([{"no_verdict": 1}]) == {}
+
+
+def test_aggregate_reviews_averages_score():
+    out = common.aggregate_reviews([
+        {"verdict": "PASS", "progress_score": 100},
+        {"verdict": "PASS", "progress_score": 80},
+    ])
+    assert out["progress_score"] == 90
+
+
+def test_summarize_metrics(tmp_path):
+    (tmp_path / "metrics.jsonl").write_text(
+        '{"label": "release_gate", "input_tokens": 100, "output_tokens": 50, "latency_ms": 1000}\n'
+        '{"label": "mission_compile", "input_tokens": 200, "output_tokens": 30, "latency_ms": 3000}\n',
+        encoding="utf-8",
+    )
+    m = common.summarize_metrics(tmp_path)
+    assert m["calls"] == 2
+    assert m["total_tokens"] == 380
+    assert m["avg_latency_ms"] == 2000
+    assert m["by_label"] == {"release_gate": 1, "mission_compile": 1}
+
+
+def test_summarize_metrics_empty(tmp_path):
+    m = common.summarize_metrics(tmp_path)
+    assert m["calls"] == 0 and m["total_tokens"] == 0
+
+
+def test_evidence_already_recorded(tmp_path):
+    assert not common.evidence_already_recorded(tmp_path, "pytest -q")
+    (tmp_path / "proof.md").write_text("## Evidence\nClaim checked by command: `pytest -q`\n", encoding="utf-8")
+    assert common.evidence_already_recorded(tmp_path, "pytest -q")
+    assert not common.evidence_already_recorded(tmp_path, "ruff check .")
+
+
 def test_aggregate_reviews_single_passthrough():
     r = {"verdict": "PASS", "progress_score": 90}
     assert common.aggregate_reviews([r]) == r

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.1
+
+### Added
+- **`/cost` command** + a usage line on session start: totals DeepSeek calls,
+  tokens, and latency from `metrics.jsonl` (`summarize_metrics`).
+
+### Fixed
+- **Proof-ledger spam.** `capture_tool` no longer appends a duplicate Evidence
+  block for a verification command already recorded this session
+  (`evidence_already_recorded`).
+
+### Tests
+- Expanded to 38 unit tests: markdown-fence + last-object JSON parsing, balanced
+  span counting, private-key redaction, transcript-id session keys,
+  retry-exhaustion, review aggregation edges, metrics summary, evidence dedup.
+
 ## 0.4.0
 
 ### Added

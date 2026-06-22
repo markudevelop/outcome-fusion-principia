@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from common import cwd_from_hook, env_bool, json_stdout, mirror_latest, read_stdin_json, safe_append, summarize_hook_tool, workspace_dir
+from common import cwd_from_hook, env_bool, evidence_already_recorded, json_stdout, mirror_latest, read_stdin_json, safe_append, summarize_hook_tool, workspace_dir
 
 CHECK_HINTS = re.compile(r"\b(test|pytest|vitest|jest|playwright|cypress|lint|typecheck|tsc|mypy|ruff|eslint|build|cargo test|go test|backtest|benchmark)\b", re.I)
 
@@ -29,7 +29,7 @@ def main() -> int:
     context = ""
     if event == "PostToolUseFailure":
         context = "Outcome Fusion noticed this tool failed. Do not repeat the same failing action blindly. Identify why it failed, change the hypothesis, then run the smallest next check."
-    elif tool == "Bash" and CHECK_HINTS.search(cmd):
+    elif tool == "Bash" and CHECK_HINTS.search(cmd) and not evidence_already_recorded(wdir, cmd):
         safe_append(
             wdir / "proof.md",
             f"\n\n## Evidence {time.strftime('%Y-%m-%d %H:%M:%S')}\nClaim checked by command: `{cmd}`\nResult: see the session `tool_log.md` latest entry.\nRemaining risk: Claude must interpret the result and update this ledger if it proves or disproves a claim.\n"

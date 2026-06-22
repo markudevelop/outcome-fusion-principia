@@ -1,7 +1,7 @@
 {
   "name": "outcome-fusion-principia",
   "displayName": "Outcome Fusion Principia Operator",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Session scoped first principles operator with resume-aware mission/proof/review files, a visible DeepSeek prompt rewrite, terminal verdicts, a working scientific release gate, and completion closure.",
   "author": {
     "name": "Mark"
@@ -20,7 +20,8 @@
   "commands": [
     "./commands/principia.md",
     "./commands/status.md",
-    "./commands/reset.md"
+    "./commands/reset.md",
+    "./commands/cost.md"
   ],
   "agents": [
     "./agents/first-principles-skeptic.md",

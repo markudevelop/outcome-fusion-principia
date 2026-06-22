@@ -97,6 +97,7 @@ Add `nofusion` anywhere in a prompt to skip the compiler for that turn.
 |---------|---------|
 | `/principia` | Force the operator mode manually on the current task |
 | `/status` | Show the active session's mission, blocker, evidence, next test |
+| `/cost` | Summarise DeepSeek usage (calls, tokens, latency) for the session |
 | `/reset` | Archive/clear the active session workspace (keeps project memory) |
 
 **Skills** — `principia` (general first-principles execution), `quant-scientist`

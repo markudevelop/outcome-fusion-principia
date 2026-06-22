@@ -583,6 +583,46 @@ def log_metric(wdir: Path, label: str, extra: dict[str, Any] | None = None) -> N
         pass
 
 
+def summarize_metrics(wdir: Path) -> dict[str, Any]:
+    """Aggregate the per-call telemetry in metrics.jsonl into a session total."""
+    text = safe_read(wdir / "metrics.jsonl", limit=500000)
+    calls = tin = tout = lat = 0
+    by_label: dict[str, int] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        calls += 1
+        tin += int(r.get("input_tokens") or 0)
+        tout += int(r.get("output_tokens") or 0)
+        lat += int(r.get("latency_ms") or 0)
+        lbl = str(r.get("label") or "?")
+        by_label[lbl] = by_label.get(lbl, 0) + 1
+    return {
+        "calls": calls,
+        "input_tokens": tin,
+        "output_tokens": tout,
+        "total_tokens": tin + tout,
+        "avg_latency_ms": round(lat / calls) if calls else 0,
+        "by_label": by_label,
+    }
+
+
+def evidence_already_recorded(wdir: Path, cmd: str) -> bool:
+    """True if this exact verification command is already in the recent proof tail.
+
+    Stops the proof ledger from filling with one identical Evidence block per
+    repeated test/lint/build invocation.
+    """
+    if not cmd:
+        return True
+    return f"`{cmd}`" in safe_read(wdir / "proof.md", limit=6000)
+
+
 def aggregate_reviews(reviews: list[dict[str, Any]]) -> dict[str, Any]:
     """Combine N independent judge verdicts by self-consistency (majority).
 
