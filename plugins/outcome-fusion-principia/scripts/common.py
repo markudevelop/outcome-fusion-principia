@@ -1224,9 +1224,18 @@ def combined_memory(wdir: Path, limit: int = 30000) -> str:
 
 
 def make_state_path(payload: dict[str, Any], cwd: Path) -> Path:
+    """Per-project, per-session gate state.
+
+    The key used to be ``cwd.name + session_key``, so two checkouts sharing a
+    directory name — /work/clientA/app and /work/clientB/app — resolved to the
+    SAME state file and shared ``continues``, ``last_diff_hash`` and
+    ``same_diff_count``. Working in one could push the other past its
+    continuation cap, or make its diff look unchanged. The full path hash
+    disambiguates while keeping the readable prefix.
+    """
     key = session_key_from_payload(payload, cwd)
-    clean = _clean_session_part(cwd.name + "_" + key, 140)
-    return plugin_data_dir(payload) / f"{clean}_state.json"
+    clean = _clean_session_part(cwd.name + "_" + key, 130)
+    return plugin_data_dir(payload) / f"{clean}_{sha(str(cwd.resolve()))[:8]}_state.json"
 
 
 def load_state(path: Path) -> dict[str, Any]:
