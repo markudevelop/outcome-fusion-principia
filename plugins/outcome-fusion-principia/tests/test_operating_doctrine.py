@@ -531,3 +531,99 @@ def test_every_hook_honours_the_master_switch(script, tmp_path):
     assert p.returncode == 0
     assert p.stdout.strip() == "", f"{script} still emitted output while disabled"
     assert not (tmp_path / ".ai").exists(), f"{script} still wrote a workspace while disabled"
+
+
+# ---- evidence QUALITY doctrine (added after the 38-scenario eval) -----------
+#
+# The first 38-scenario run caught 21/26 with 0 false blocks. All five misses
+# scored 100 and shared one root cause: evidence was PRESENT, so the judge never
+# asked whether the evidence actually established the claim. These lock the three
+# rules added in response.
+
+@pytest.mark.parametrize("needle", [
+    "skipped",              # "3 passed, 12 skipped" is not covered
+    "asserts nothing",      # a test that calls the function and checks nothing
+    "flaky",                # passed only after reruns
+    "defaults to off",      # shipped behind a disabled flag
+])
+def test_gate_doctrine_covers_defective_test_evidence(needle):
+    assert needle in release_gate.SYSTEM.lower(), needle
+
+
+@pytest.mark.parametrize("needle", [
+    "credential, token, or key literal",
+    "destructive or irreversible",
+    "except exception: pass",
+    "removal of a check, assertion, or test",
+])
+def test_gate_doctrine_reads_the_diff_for_danger(needle):
+    assert needle in release_gate.SYSTEM.lower(), needle
+
+
+@pytest.mark.parametrize("needle", [
+    "look-ahead",
+    "out-of-sample",
+    "costs, fees, slippage",
+    "survivorship",
+])
+def test_gate_doctrine_covers_quant_method_defects(needle):
+    assert needle in release_gate.SYSTEM.lower(), needle
+
+
+def test_evidence_lens_asks_what_was_not_covered():
+    # The old lens ("is every important claim verified, sourced, tested?") is a
+    # presence check and passed all five misses.
+    lens = common.GATE_LENSES[1].lower()
+    assert "evidence quality" in lens
+    assert "not cover" in lens
+
+
+def test_default_vote_count_still_uses_the_sharpened_lenses():
+    # Adding the risk lens must not shuffle which lenses the default 3 votes use.
+    lenses = common.vote_lenses(3)
+    assert lenses[0] == ""
+    assert "evidence quality" in lenses[1].lower()
+    assert "completeness" in lenses[2].lower()
+
+
+def test_risk_lens_is_available_at_higher_vote_counts():
+    assert any("risk in the diff" in l.lower() for l in common.vote_lenses(6))
+
+
+# ---- this repo is public: no private material may ship ----------------------
+
+PRIVATE_MARKERS = [
+    "c:\\users", "c:/users", "/home/mark",     # local absolute paths
+    "msts-future", "msts-live", "edgelab", "0-dte-tasty",   # private repos
+    "hydra", "calm-rich-iv",                                # private strategies
+    "newgene", "@gmail",                                    # personal identifiers
+    "references/",                                          # unshipped evidence files
+]
+
+
+@pytest.mark.parametrize("path", sorted(
+    str(p.relative_to(PLUGIN)) for p in (PLUGIN / "skills").rglob("SKILL.md")
+))
+def test_shipped_skills_carry_no_private_material(path):
+    # The quant skills were ported from the user's local ~/.claude/skills, which
+    # reference private repos and dated P&L. The methodology ships; the evidence
+    # and the machine paths do not.
+    text = (PLUGIN / path).read_text(encoding="utf-8").lower()
+    for marker in PRIVATE_MARKERS:
+        assert marker not in text, f"{path} leaks private marker: {marker}"
+    assert not re.search(r"sk-[A-Za-z0-9]{16,}", text), f"{path} contains a credential"
+
+
+def test_ported_quant_skills_are_present_and_described():
+    for name in ("bucket-brute-force", "quant-aggregation-integrity"):
+        sk = PLUGIN / "skills" / name / "SKILL.md"
+        assert sk.exists(), f"{name} not shipped"
+        head = sk.read_text(encoding="utf-8")[:1200]
+        assert head.lstrip().startswith("---") and "description:" in head, name
+
+
+def test_no_dangling_reference_links_in_shipped_skills():
+    # The source skill linked references/*.md that are deliberately not shipped.
+    for sk in (PLUGIN / "skills").rglob("SKILL.md"):
+        for link in re.findall(r"\]\((references/[^)]+)\)", sk.read_text(encoding="utf-8")):
+            assert (sk.parent / link).exists(), f"{sk.name} links missing {link}"

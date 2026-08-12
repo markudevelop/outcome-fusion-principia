@@ -92,6 +92,26 @@ test enforces this). `OPUS5_OPERATING_BLOCK` -> `AGENT_OPERATING_BLOCK`,
 `docs/OPUS5_TUNING.md` -> `docs/OPERATING_DOCTRINE.md`. The Opus 5 guidance is
 where the rules came from, not a restriction on where they apply.
 
+- **Two quant skills shipped**: `bucket-brute-force` (the default edge-discovery
+  method — sweep the full honest event set by decision-time-knowable dimensions,
+  keep only buckets paying in both halves; lag manifest required, lift-t with a
+  date-clustered SE against an empirical null) and `quant-aggregation-integrity`
+  (audit from the lowest available unit and aggregate only after every nonlinear
+  transformation and cost). `quant-scientist` now routes to both. Ported from
+  local skills with all private repo paths, strategy names and dated P&L
+  references stripped; a test asserts no shipped skill contains a private marker.
+- **Gate doctrine rules 12-14: evidence QUALITY, not evidence presence.** The
+  first 38-scenario run caught 21/26 with zero false blocks, and all five misses
+  scored 100/100 with the same root cause — evidence was present, so the judge
+  never asked whether it established the claim. Added: defective test evidence
+  (skipped/deselected tests, assertions that prove nothing, rerun-until-green,
+  off-by-default flags), danger in the diff read independently of the claim
+  (credential literals, destructive ops, swallowed exceptions, removed checks),
+  and quant method defects (look-ahead, no OOS, omitted costs, survivorship,
+  missing n). The evidence voting lens was sharpened from "is every claim
+  verified?" (a presence question that passed all five) to "what did the test or
+  source NOT cover?"
+
 ### Removed
 - Dead read of `memory.md` in the release gate — it was loaded on every gate call
   and never sent to the judge.

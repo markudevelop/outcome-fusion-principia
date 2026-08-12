@@ -874,10 +874,14 @@ def evidence_already_recorded(wdir: Path, cmd: str) -> bool:
 # literature says drives the gain (see docs/MODEL_FUSION.md).
 GATE_LENSES = [
     "",  # vote 0: the full doctrine, no extra lens
-    "For this pass, weight EVIDENCE most: is every important claim verified, sourced, tested, or calculated?",
+    # Sharpened after the 38-scenario eval: every miss had evidence PRESENT but
+    # defective (skipped tests reported as green, a benchmark with no baseline, a
+    # backtest with look-ahead). Asking "is there evidence?" passed all of them.
+    "For this pass, weight EVIDENCE QUALITY most: for each important claim, does the evidence actually establish it? What did the test, benchmark, or source NOT cover — skipped or deselected tests, an assertion that proves nothing, a rerun until green, a number with no baseline, no out-of-sample, or omitted costs?",
     "For this pass, weight COMPLETENESS and closure most: what would the user's 'is there anything else?' reveal as missing?",
     "For this pass, weight SIMPLICITY most: what is unnecessary, overbuilt, or should be removed before adding more?",
     "For this pass, weight CORRECTNESS most: is anything actually wrong, inaccurate, or broken?",
+    "For this pass, weight RISK IN THE DIFF most, independently of whether the stated goal was met: any credential or key literal, destructive or irreversible data operation, swallowed exception that turns a failure into silence, or a removed check/test.",
 ]
 
 
