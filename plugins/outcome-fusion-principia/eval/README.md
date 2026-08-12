@@ -116,6 +116,47 @@ majority absorbs exactly this noise.
 - This measures **gate discrimination**, not end-to-end task success — see the
   planned A/B below.
 
+## How reliable is a gate verdict? (`ab_payload_caps.py --control`)
+
+Measured on **real session workspaces**, not synthetic scenarios: judge the same
+session twice with an identical prompt and count how often the verdict changes.
+
+| Setting | Verdict self-agreement | Flips |
+|---|---|---|
+| 1 vote | 80% | 2 / 10 |
+| 3 votes (**the shipped default**) | 88% | 1 / 8 |
+
+Two things follow, and the second is the uncomfortable one.
+
+**Voting helps, directionally.** 20% → 12.5% instability is consistent with the
+synthetic `ab_voting.py` result and independently supports the
+`OUTCOME_FUSION_GATE_VOTES=3` default, which until now rested on 5 synthetic
+scenarios. At n=10 and n=8 the difference is *not* statistically established.
+
+**Voting does not make the gate deterministic.** Roughly **1 in 8 real-session
+verdicts is unstable even at the default**, and the flips are not subtle — the
+single-vote arm produced `PASS/100 → FAIL/60` on the same input twice. Treat a
+gate verdict as a strong signal, not an oracle. If a FAIL looks wrong, re-running
+is a legitimate check rather than a way of cheating the gate.
+
+This also bounds every single-vote number elsewhere in this directory, including
+the 21 → 24 → 25 trajectory below: the direction survives, the precision does not.
+
+### Why the caps A/B needed this
+
+`ab_payload_caps.py` first reported 7/10 agreement between the pre-0.7.0 caps and
+the current ones, with 2 of 3 flips going *looser* — which reads like evidence
+that truncated context hides problems. The control says the noise floor is 2/10.
+A one-session difference at n=10 is indistinguishable, so **that reading was
+withdrawn and the caps stayed as shipped.** Without the control arm the plugin
+would have "measured" an effect that was not there.
+
+```bash
+python plugins/outcome-fusion-principia/eval/ab_payload_caps.py --n 10            # A/B
+python plugins/outcome-fusion-principia/eval/ab_payload_caps.py --n 10 --control  # noise floor
+python plugins/outcome-fusion-principia/eval/ab_payload_caps.py --n 8 --control --votes 3
+```
+
 ## Voting A/B (`ab_voting.py`)
 
 `ab_voting.py` runs every scenario through the exact gate logic at
