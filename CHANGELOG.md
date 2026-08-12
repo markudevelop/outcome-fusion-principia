@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.7.2 — stop diluting the evidence the judge reads
+
+### Fixed
+
+- **The proof ledger was mostly the plugin's own boilerplate.** Every
+  test/lint/build command appended a four-line stub that restated the command,
+  pointed at `tool_log.md` for the result, and repeated advice about
+  interpreting it — roughly 900 characters carrying no evidence, into the one
+  file the gate reads for claims. Measured on a real 160,000-char ledger: those
+  stubs were **60% of blocks and 39% of the file**, and inside the 30,000 chars
+  the judge actually reads, only **8 real claims survived among 14 stubs**. The
+  entry is now a single compact line (~85 chars). On that same ledger the auto
+  content drops **62,138 → 8,817 chars (86% less)**, freeing the judge's whole
+  window for actual claims. The useful half of the hook — the nudge telling
+  Claude to interpret the result — is unchanged.
+- **Dedup never fired.** Commands arrive as `cd "<path>" && pytest -q`, so every
+  invocation was a unique string, and the check only scanned the last 6,000
+  characters anyway. `normalize_cmd()` strips the shell prologue and the scan
+  covers the whole ledger. Across 54 real sessions this collapses 65 of 1,286
+  recorded entries (5%) — a small effect, and honestly the compact format is
+  where the 86% comes from, not the dedup.
+
+### Added
+
+- `eval/ab_payload_caps.py` — replays REAL session workspaces through the
+  shipped gate at the pre-0.7.0 caps and the current ones and reports verdict
+  agreement. `run_eval.py` cannot answer this: its scenarios are a few hundred
+  characters, so no cap ever engages. This closes the one change v0.7.0 shipped
+  with an explicitly unmeasured quality effect.
+
 ## 0.7.1 — the judge was never seeing your code
 
 ### Fixed
