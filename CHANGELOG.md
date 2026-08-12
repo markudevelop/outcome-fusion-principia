@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.7.1 — the judge was never seeing your code
+
+### Fixed
+
+- **The release gate has never seen a git diff on Windows.** `run_cmd` used
+  `shell=True`, which on Windows is `cmd.exe`, where a single quote is an
+  ordinary character — so the pathspec `':(exclude).git'` reached git with the
+  quotes attached and every call died:
+  `fatal: ':(exclude).git': '':(exclude).git'' is outside repository` (exit 128).
+  `run_cmd` then returned `str(e)` — *"Command '...' returned non-zero exit
+  status 128."* — **as the diff**. Measured on this machine: 1,979 release-gate
+  calls in one repo, every one judging that error string instead of the code.
+  Git now runs as an argument vector (`run_argv`), no shell, no quoting layer.
+- **Failing commands discarded their own output.** `str(CalledProcessError)`
+  never includes stderr, which is exactly why the above hid for so long. Both
+  runners now keep the command's message.
+- **Real diffs crashed on Windows.** With the diff actually flowing, `text=True`
+  decoded it with cp1252 and raised `UnicodeDecodeError` in subprocess's reader
+  thread on the first non-ASCII byte, returning `None`. Both runners now decode
+  UTF-8 with `errors="replace"`.
+
+### Added
+
+- **Deterministic secret scan.** `redact()` correctly rewrites credentials before
+  anything leaves the machine — which also means the judge sees
+  `TOKEN=<REDACTED>` and reads it as already handled. Measured: the
+  secret-in-diff scenario was missed on every eval run, including after an
+  explicit doctrine rule telling the judge to look for it. It is not a prompt
+  problem; the evidence is destroyed before the judge sees it. `scan_secrets()`
+  now runs locally on the raw diff and passes only the FINDING (path, line,
+  pattern label — never the value) as a `SECRET SCAN` field, the same shape as
+  the existing lazy-impossibility flag. Findings in test/fixture/docs paths are
+  marked rather than blocking, so a repo that tests its own secret handling does
+  not fail its own gate. The no-API-key heuristic fallback now fails closed on a
+  non-fixture finding instead of returning PASS.
+
+### Measured
+
+38-scenario eval, single vote, `deepseek-v4-pro`:
+
+| Run | Defects caught | Good handled |
+|---|---|---|
+| Before the evidence-quality doctrine | 21 / 26 | 12 / 12 |
+| After (rules 11-15) | **24 / 26** | **12 / 12** |
+
+Rules 11-15 recovered skipped-tests-as-green, the swallowed exception,
+look-ahead bias and the no-OOS grid search (quant went 1/3 → 3/3) with **no
+false-block cost**. The two remaining misses drove the fixes above.
+
 ## 0.7.0 — tuned for Claude Opus 5
 
 Driven by Anthropic's [Prompting Claude Opus 5](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5)

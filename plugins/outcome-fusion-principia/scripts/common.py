@@ -302,12 +302,119 @@ def redact(text: str, limit: int | None = None) -> str:
     return out
 
 
-def run_cmd(cmd: str, cwd: Path, timeout: int = 20, limit: int = 30000) -> str:
-    try:
-        out = subprocess.check_output(cmd, cwd=str(cwd), shell=True, stderr=subprocess.STDOUT, text=True, timeout=timeout)
-    except Exception as e:
-        out = str(e)
+def _finish_cmd(out: str | None, limit: int, redact_output: bool) -> str:
+    out = out or ""
+    if not redact_output:
+        return out[-limit:] if len(out) > limit else out
     return redact(out, limit=limit)
+
+
+def run_cmd(cmd: str, cwd: Path, timeout: int = 20, limit: int = 30000, redact_output: bool = True) -> str:
+    """Run a shell command, keeping the command's own output when it fails.
+
+    The previous version returned ``str(e)`` on failure, which is only
+    "Command '...' returned non-zero exit status N." — the actual stderr, the
+    part that says WHY, was discarded. That is how a permanently broken git diff
+    stayed invisible for thousands of gate calls.
+    """
+    try:
+        out = subprocess.check_output(cmd, cwd=str(cwd), shell=True, stderr=subprocess.STDOUT,
+                                      text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    except subprocess.CalledProcessError as e:
+        out = f"[command failed: exit {e.returncode}]\n{e.output or ''}"
+    except Exception as e:
+        out = f"[command failed: {e}]"
+    return _finish_cmd(out, limit, redact_output)
+
+
+def run_argv(argv: list[str], cwd: Path, timeout: int = 20, limit: int = 30000, redact_output: bool = True) -> str:
+    """Run a command as an argument vector, with no shell involved.
+
+    Required for anything carrying git pathspec magic. ``shell=True`` uses
+    cmd.exe on Windows, where a single quote is an ordinary character, so
+    ``':(exclude).git'`` reached git with the quotes attached and every call
+    died with `fatal: ... is outside repository` (exit 128). Passing argv
+    removes the quoting layer entirely and behaves the same on every platform.
+    """
+    try:
+        out = subprocess.check_output(argv, cwd=str(cwd), stderr=subprocess.STDOUT,
+                                      text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    except subprocess.CalledProcessError as e:
+        out = f"[command failed: exit {e.returncode}]\n{e.output or ''}"
+    except Exception as e:
+        out = f"[command failed: {e}]"
+    return _finish_cmd(out, limit, redact_output)
+
+
+# Secret shapes worth blocking a release over. Deliberately narrower than
+# SECRET_PATTERNS (which is for redaction and can afford false positives).
+_SECRET_SCAN = [
+    # No \b around the keyword: it is usually embedded in a longer identifier
+    # (ANALYTICS_TOKEN, stripe_secret_key) and `_` is a word character, so a
+    # word boundary never fires there. That bug made the scanner silent on the
+    # exact line it exists to catch.
+    ("hardcoded key/token/password literal", re.compile(
+        r"(?i)[A-Za-z0-9_.\-]*(api[_-]?key|secret|token|passwd|password|private[_-]?key|bearer)[A-Za-z0-9_.\-]*"
+        r"\s*[:=]\s*['\"][^'\"\s]{8,}['\"]")),
+    ("provider secret key (sk-...)", re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}")),
+    ("github token", re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}")),
+    ("aws access key id", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("private key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+]
+
+
+_FIXTURE_PATH = re.compile(
+    r"(^|/)(tests?|spec|specs|__tests__|fixtures?|examples?|mocks?|testdata|docs?)(/|$)|"
+    r"(^|/)(test_|conftest\.)|_test\.|\.spec\.|\.md$",
+    re.I,
+)
+
+
+def _is_fixture_path(path: str) -> bool:
+    """True for paths where a credential-shaped literal is probably a fixture.
+
+    Without this the scanner blocks any repo that tests its own secret handling —
+    including this plugin, whose test suite necessarily contains fake keys. Such
+    findings are still reported, just marked for the judge to weigh rather than
+    treated as automatically release-blocking.
+    """
+    return bool(_FIXTURE_PATH.search(path or ""))
+
+
+def scan_secrets(diff: str, limit: int = 10) -> list[str]:
+    """Flag credential literals on ADDED diff lines, without echoing the value.
+
+    The judge never sees a secret: ``redact()`` rewrites the diff (and every
+    outbound message) before it leaves the machine, which is correct — a
+    credential must not be shipped to a third-party judge. The side effect is
+    that the judge is structurally unable to notice a committed secret; it reads
+    ``TOKEN=<REDACTED>`` as already handled. Measured: the secret-in-diff eval
+    scenario was missed on every run, including after an explicit doctrine rule
+    telling the judge to look for exactly this.
+
+    So the detection happens here, deterministically, and only the FINDING
+    crosses the wire — never the matched text.
+    """
+    findings: list[str] = []
+    current = "(unknown file)"
+    for lineno, line in enumerate((diff or "").splitlines(), 1):
+        if line.startswith("+++ "):
+            path = line[4:].strip()
+            current = path[2:] if path.startswith(("a/", "b/")) else path
+            continue
+        if not line.startswith("+"):
+            continue
+        for label, pattern in _SECRET_SCAN:
+            if pattern.search(line):
+                where = f"{current}:{lineno}"
+                if _is_fixture_path(current):
+                    findings.append(f"{where}: {label} [test/fixture path - confirm it is not a real credential]")
+                else:
+                    findings.append(f"{where}: {label}")
+                break
+        if len(findings) >= limit:
+            break
+    return findings
 
 
 def sha(text: str) -> str:
@@ -931,12 +1038,29 @@ def aggregate_reviews(reviews: list[dict[str, Any]]) -> dict[str, Any]:
     return merged
 
 
-def git_status_and_diff(cwd: Path, diff_limit: int | None = None) -> tuple[str, str, str]:
-    status = run_cmd("git status --short", cwd, timeout=15, limit=20000)
-    diff_cmd = "git diff -- . ':(exclude).git' ':(exclude)node_modules' ':(exclude).next' ':(exclude)dist' ':(exclude)build' ':(exclude).ai/outcome_fusion/tool_log.md'"
+GIT_DIFF_ARGV = [
+    "git", "diff", "--", ".",
+    ":(exclude).git",
+    ":(exclude)node_modules",
+    ":(exclude).next",
+    ":(exclude)dist",
+    ":(exclude)build",
+    ":(exclude).ai/outcome_fusion/tool_log.md",
+]
+
+
+def git_status_and_diff(cwd: Path, diff_limit: int | None = None) -> tuple[str, str, str, list[str]]:
+    """Return (status, redacted_diff, hash, secret_findings).
+
+    The diff is scanned for credentials BEFORE redaction, because redaction is
+    what makes them invisible to the judge. Only the findings travel.
+    """
+    status = run_argv(["git", "status", "--short"], cwd, timeout=15, limit=20000)
     limit = diff_limit if diff_limit is not None else env_int("OUTCOME_FUSION_MAX_DIFF_CHARS", 40000)
-    diff = run_cmd(diff_cmd, cwd, timeout=30, limit=limit)
-    return status, diff, sha(status + diff)
+    raw_diff = run_argv(GIT_DIFF_ARGV, cwd, timeout=30, limit=limit, redact_output=False)
+    secrets = scan_secrets(raw_diff)
+    diff = redact(raw_diff, limit=limit)
+    return status, diff, sha(status + diff), secrets
 
 
 def default_mission(prompt: str, cwd: Path) -> str:
