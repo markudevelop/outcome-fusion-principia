@@ -1020,6 +1020,43 @@ def tail_tool_log(text: str, budget: int, per_entry: int = 2500) -> str:
     return "\n".join(reversed(kept))
 
 
+MISSION_REQUIRED_SECTIONS = ("# mission", "# deliverables checklist")
+
+
+def clean_mission(text: str) -> str:
+    """Drop any preamble the model emitted before the mission document itself.
+
+    Reasoning models narrate before answering ("We need to parse the user
+    prompt..."), and that narration was being written to mission.md and injected
+    into Claude's context as its operating instruction. Measured across 67 real
+    missions: 73% began with raw chain-of-thought and 84% were missing at least
+    one required section, including the deliverables checklist the release gate
+    measures completeness against.
+
+    The document starts at the first markdown heading; everything before it is
+    scratchpad. Deterministic, so it does not depend on the model complying with
+    an instruction it has already ignored.
+    """
+    if not text:
+        return ""
+    stripped = text.lstrip()
+    if stripped.startswith("#"):
+        return stripped.rstrip()
+    m = re.search(r"^#{1,3}\s+\S", text, re.M)
+    return text[m.start():].rstrip() if m else text.strip()
+
+
+def mission_is_usable(text: str) -> bool:
+    """True when the compiled mission actually contains a mission.
+
+    Guards the write: injecting a truncated scratchpad is worse than falling
+    back to the static default mission, because the gate then judges delivery
+    against a checklist that was never written.
+    """
+    low = (text or "").lower()
+    return all(section in low for section in MISSION_REQUIRED_SECTIONS)
+
+
 def evidence_already_recorded(wdir: Path, cmd: str) -> bool:
     """True if this verification command is already recorded in the ledger.
 
@@ -1124,6 +1161,17 @@ def default_mission(prompt: str, cwd: Path) -> str:
     signals = project_signals(cwd)
     return f"""# Mission
 Execute the user's request fully and release ready: {prompt.strip()}
+
+# Deliverables checklist
+This mission is the offline fallback, so the checklist was not compiled. Treat
+EVERY discrete thing the user asked for in the request above as one item, and
+judge completeness against that verbatim request. If it asked for five things,
+five must be delivered — not four plus a report.
+
+# Better framing
+Not compiled offline. If a materially better route to the user's underlying goal
+is obvious while working, say so in one sentence and continue with the request as
+asked.
 
 # Method
 Use first principles. Define the real constraint, remove non essential parts, test what can be tested, and never accept vague impossibility claims.

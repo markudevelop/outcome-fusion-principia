@@ -5,6 +5,8 @@ import os
 
 from common import (
     INTENT_BUILD,
+    clean_mission,
+    mission_is_usable,
     INTENT_QUESTION,
     AGENT_OPERATING_BLOCK,
     QUESTION_MODE_CONTEXT,
@@ -36,8 +38,9 @@ Use first principles, falsification, simplification, evidence, and release readi
 The user wants autonomous progress, not low value clarification questions.
 Do not ask the user low value questions. Make reversible assumptions, execute, verify, and report. Only stop for true blockers that cannot be resolved inside the local repo.
 You are allowed to be imaginative, but every imaginative path must connect to a test, inspection, calculation, backtest, source, or proof.
+Question the request itself, not only how to execute it. The user's phrasing is a proposed route to a goal, and sometimes a worse route than one they did not think of; say so plainly and early, before the work starts, not as criticism afterwards. Equally, do not invent a better framing where none exists — most well-posed requests are already the direct route, and saying so is the correct answer, not a missed opportunity.
 The task may be anything: engineering, research, writing, analysis, factual question answering, planning, or a decision. The mission must fit the task. Choose evidence that fits its kind: code uses builds/tests/runs; research and factual work use sources, citations, calculations, and cross-checks; writing and analysis use the stated requirements and accuracy. Do not force code, tests, or repo steps onto a task that is not about code.
-Return clean Markdown only.
+Return clean Markdown only. Begin your reply with '# Mission'. Write no preamble, no notes, and no reasoning — output only the finished document. Anything before the first heading is discarded.
 """.strip()
 
 TEMPLATE = """
@@ -65,6 +68,13 @@ List:
 3. Known facts
 4. Unknowns that can be checked
 5. Parts likely not needed
+
+# Better framing
+The user has explicitly asked to be challenged here: they would rather be told their request is not the smartest version of itself than have it executed faithfully. So, in at most four lines:
+1. The underlying goal — the outcome the user actually wants, which the literal request is only one route to.
+2. At most two alternatives that would reach that goal better, cheaper, faster, or with less to maintain. For each, one clause on why, and what evidence would show it is genuinely better.
+3. If the request is already the most direct route to the goal, write exactly "None - the request is the direct route." and nothing else. Say this whenever it is true; a manufactured alternative is worse than none, and most well-posed requests need none.
+This section is ADVISORY. It never changes scope, never delays execution, and is never a reason to do something else instead. Claude executes the request as asked and mentions a better route in one sentence.
 
 # Deliverables checklist
 Enumerate, as a numbered list, EVERY discrete thing the user asked for in this prompt — one line each, phrased so it can be checked off as done or not done. If the user asked for five things, there must be five lines. Do not add items the user did not ask for, and do not merge two requests into one line. This list is what "done" is measured against.
@@ -185,10 +195,11 @@ PROOF LEDGER:
     memory = combined_memory(wdir, limit=30000)
     signals = project_signals(cwd)
 
+    body = TEMPLATE.format(prompt=prompt, previous_mission=previous, memory=memory, signals=signals)
     try:
-        mission = call_deepseek(
+        mission = clean_mission(call_deepseek(
             SYSTEM,
-            TEMPLATE.format(prompt=prompt, previous_mission=previous, memory=memory, signals=signals),
+            body,
             max_tokens=5200,
             temperature=0.2,
             timeout=110,
@@ -196,7 +207,25 @@ PROOF LEDGER:
             # where quality holds and keep the expensive setting for the release
             # gate, which is the pass that actually has to be right.
             effort=os.getenv("OUTCOME_FUSION_COMPILE_EFFORT", "medium"),
-        )
+        ))
+        if not mission_is_usable(mission):
+            # The model narrated instead of answering and ran out of budget
+            # mid-document. Retry once, telling it the failure mode directly.
+            mission = clean_mission(call_deepseek(
+                SYSTEM + "\n\nYour previous attempt emitted reasoning instead of the document and was discarded. "
+                         "Begin your reply with '# Mission'. Write no preamble, no notes, no thinking — only the finished Markdown.",
+                body,
+                max_tokens=5200,
+                temperature=0.2,
+                timeout=110,
+                effort=os.getenv("OUTCOME_FUSION_COMPILE_EFFORT", "medium"),
+            ))
+        if not mission_is_usable(mission):
+            # A truncated scratchpad is worse than the static template: the gate
+            # would judge completeness against a checklist that never got written.
+            safe_write(wdir / "last_error.txt",
+                       "compile_prompt: model returned no usable mission twice; used default_mission\n")
+            mission = default_mission(prompt, cwd)
         log_metric(wdir, "mission_compile")
     except Exception as e:
         mission = default_mission(prompt, cwd)
