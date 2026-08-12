@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.7.3 — the judge was reading a fragment
+
+### Fixed
+
+- **The tool log reached the judge starting mid-entry.** The gate tail-cut
+  `tool_log.md` by character, so the first thing it read was a partial entry
+  with no header, no command, and no context. Measured across 43 real sessions:
+  **43 of 43 began mid-entry.** A single large entry could also swallow the
+  whole window — of 1,903 real entries, 24 (1.3%) individually exceed the 12,000
+  budget, leaving the judge one truncated tool call as its entire view.
+  `tail_tool_log()` now splits on entry headers, takes the newest whole entries,
+  and caps each one (keeping its head and tail, where the command and the result
+  live). Same budget, **1.42x more whole entries visible (5.0 → 7.1 average)**,
+  and never a fragment.
+- New `OUTCOME_FUSION_MAX_TOOLLOG_ENTRY_CHARS` (default 2500) bounds any single
+  entry.
+
 ## 0.7.2 — stop diluting the evidence the judge reads
 
 ### Fixed

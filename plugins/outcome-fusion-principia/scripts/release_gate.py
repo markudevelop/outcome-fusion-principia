@@ -26,6 +26,7 @@ from common import (
     recent_transcript_text,
     safe_format,
     safe_read,
+    tail_tool_log,
     safe_write,
     save_state,
     mirror_latest,
@@ -254,7 +255,12 @@ def main() -> int:
     # cost is (mission + transcript + diff + proof + tool_log) x votes. Tail
     # truncation keeps the most recent — and most decision-relevant — content.
     proof = safe_read(wdir / "proof.md", limit=env_int("OUTCOME_FUSION_MAX_PROOF_CHARS", 30000))
-    tool_log = safe_read(wdir / "tool_log.md", limit=env_int("OUTCOME_FUSION_MAX_TOOLLOG_CHARS", 12000))
+    tool_log_budget = env_int("OUTCOME_FUSION_MAX_TOOLLOG_CHARS", 12000)
+    tool_log = tail_tool_log(
+        safe_read(wdir / "tool_log.md", limit=tool_log_budget * 6),
+        budget=tool_log_budget,
+        per_entry=env_int("OUTCOME_FUSION_MAX_TOOLLOG_ENTRY_CHARS", 2500),
+    )
     # (memory.md is deliberately not read here: it was loaded and never sent to
     # the judge. The lesson loop runs through compile_prompt's combined_memory.)
     transcript = recent_transcript_text(

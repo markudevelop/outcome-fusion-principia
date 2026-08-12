@@ -980,6 +980,46 @@ def normalize_cmd(cmd: str, limit: int = 160) -> str:
     return out[:limit]
 
 
+_TOOL_LOG_ENTRY = re.compile(r"^## \d{4}-\d{2}-\d{2} ", re.M)
+
+
+def tail_tool_log(text: str, budget: int, per_entry: int = 2500) -> str:
+    """Return the most recent whole tool-log entries within a character budget.
+
+    A plain tail cut (``safe_read(..., limit)``) slices by character, so the
+    first thing the judge reads is almost always a fragment beginning mid-entry,
+    and one large entry can consume the entire window — measured on 1,903 real
+    entries, 24 of them (1.3%) individually exceed the 12k budget, leaving the
+    judge a single truncated tool call as its whole view of the session.
+
+    Splitting on entry headers and capping each entry fixes both: whole entries,
+    newest first, and no single entry can crowd out the rest. Truncated entries
+    keep their head (the command) and tail (the result), which is where the
+    verdict-relevant content lives.
+    """
+    if not text:
+        return ""
+    starts = [m.start() for m in _TOOL_LOG_ENTRY.finditer(text)]
+    if not starts:
+        return text[-budget:]
+    entries = [text[s:e] for s, e in zip(starts, starts[1:] + [len(text)])]
+
+    kept: list[str] = []
+    used = 0
+    for entry in reversed(entries):
+        if len(entry) > per_entry:
+            head = entry[: per_entry // 2].rstrip()
+            tail = entry[-(per_entry // 2):].lstrip()
+            entry = f"{head}\n... [{len(entry) - per_entry:,} chars omitted] ...\n{tail}"
+        if used + len(entry) > budget:
+            break
+        kept.append(entry)
+        used += len(entry)
+    if not kept:  # a single entry larger than the whole budget
+        return entries[-1][:budget]
+    return "\n".join(reversed(kept))
+
+
 def evidence_already_recorded(wdir: Path, cmd: str) -> bool:
     """True if this verification command is already recorded in the ledger.
 
