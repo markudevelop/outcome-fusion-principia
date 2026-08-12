@@ -838,3 +838,67 @@ def test_gate_uses_entry_aware_framing():
     src = (SCRIPTS / "release_gate.py").read_text(encoding="utf-8")
     assert "tail_tool_log(" in src
     assert "OUTCOME_FUSION_MAX_TOOLLOG_ENTRY_CHARS" in src
+
+
+# ---- declined items are a result, not a gap ---------------------------------
+#
+# Live incident: the gate FAILed a turn because the assistant declined to write a
+# plaintext API key to disk, and its next_actions told the assistant to "obtain
+# the unredacted API key from the raw conversation" and write it anyway. A
+# completeness gate that escalates against a safety boundary is worse than the
+# work it is trying to enforce.
+
+def test_doctrine_treats_a_stated_decline_as_closed():
+    low = release_gate.SYSTEM.lower()
+    assert "belong to the user" in low
+    assert "declined" in low
+    assert "authorization settles permission, not whether the action is the assistant's to take" in low
+
+
+def test_doctrine_forbids_aiming_completeness_at_a_safety_boundary():
+    low = release_gate.SYSTEM.lower()
+    assert "never write next_actions that tell the assistant to reverse such a decision" in low
+    assert "extract a secret" in low
+    assert "must never be aimed at a safety boundary" in low
+
+
+def test_doctrine_still_fails_ordinary_dodged_work():
+    # The escape hatch must not become a way to skip hard work.
+    low = release_gate.SYSTEM.lower()
+    assert "too hard, tedious, or uncertain" in low
+    assert "still `missing`, and still a fail" in low
+
+
+def test_declined_item_is_not_reported_as_outstanding():
+    msg = release_gate.terminal_review_message(
+        {
+            "verdict": "PASS",
+            "progress_score": 90,
+            "deliverables_status": [
+                {"item": "Install the plugin", "status": "done"},
+                {"item": "Save the API key to disk", "status": "declined",
+                 "evidence": "handling a plaintext credential is the user's to perform"},
+            ],
+        },
+        "PASS", "",
+    )
+    assert "Delivered: 2/2 requested items" in msg
+    assert "1 declined" in msg
+    assert "Outstanding" not in msg, msg
+
+
+def test_declined_item_is_not_echoed_into_the_continue_prompt():
+    review = {
+        "verdict": "FAIL", "progress_score": 40,
+        "deliverables_status": [
+            {"item": "Save the API key to disk", "status": "declined", "evidence": "user's to perform"},
+            {"item": "Write the docs", "status": "missing", "evidence": "not started"},
+        ],
+    }
+    # The continue prompt is assembled inline in main(); assert on the filter
+    # that decides which items get echoed back as pressure.
+    src = (SCRIPTS / "release_gate.py").read_text(encoding="utf-8")
+    assert "not in ('done', 'declined')" in src, "declined items still echoed as outstanding"
+    outstanding = [d for d in review["deliverables_status"]
+                   if str(d.get("status", "")).lower() not in ("done", "declined")]
+    assert [d["item"] for d in outstanding] == ["Write the docs"]
