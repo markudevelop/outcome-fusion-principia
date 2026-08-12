@@ -68,11 +68,25 @@ def build_prompt(wdir: pathlib.Path, caps: dict) -> str:
     )
 
 
-def judge(prompt: str) -> tuple[str, object]:
-    data, _ = common.call_deepseek_json(
-        rg.SYSTEM, prompt, max_tokens=4200, temperature=0.1, timeout=170, require_keys=["verdict"]
-    )
-    return str(data.get("verdict", "?")).upper(), data.get("progress_score", "?")
+def judge(prompt: str, votes: int = 1) -> tuple[str, object]:
+    """Judge once, or N times with distinct lenses aggregated like the real gate."""
+    if votes <= 1:
+        data, _ = common.call_deepseek_json(
+            rg.SYSTEM, prompt, max_tokens=4200, temperature=0.1, timeout=170, require_keys=["verdict"]
+        )
+        return str(data.get("verdict", "?")).upper(), data.get("progress_score", "?")
+
+    lenses = common.vote_lenses(votes)
+    reviews = []
+    for i in range(votes):
+        p = prompt if not lenses[i] else prompt + "\n\n" + lenses[i]
+        data, _ = common.call_deepseek_json(
+            rg.SYSTEM, p, max_tokens=4200, temperature=0.4, timeout=170, require_keys=["verdict"]
+        )
+        if data:
+            reviews.append(data)
+    merged = common.aggregate_reviews(reviews) or {}
+    return str(merged.get("verdict", "?")).upper(), merged.get("progress_score", "?")
 
 
 def pick_sessions(root: pathlib.Path, n: int) -> list[pathlib.Path]:
@@ -92,6 +106,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=".", help="repo containing .ai/outcome_fusion/sessions")
     ap.add_argument("--n", type=int, default=8, help="how many sessions to replay")
+    ap.add_argument("--votes", type=int, default=1,
+                    help="judge each arm with N perspective-diverse votes and aggregate, "
+                         "exactly as the gate does. Default 1 measures raw single-sample "
+                         "behaviour; 3 is what actually ships.")
     ap.add_argument("--control", action="store_true",
                     help="NOISE FLOOR: judge each session twice at the SAME caps. "
                          "Without this the A/B is uninterpretable — judge verdicts are "
@@ -110,6 +128,7 @@ def main() -> int:
     label_a = "0.7.0 run A" if args.control else "pre-0.7.0"
     label_b = "0.7.0 run B" if args.control else "0.7.0"
     mode = "NOISE FLOOR (same caps twice)" if args.control else "A/B (old caps vs new caps)"
+    mode += f" @ {args.votes} vote(s)"
 
     print(f"{mode}: {len(sessions)} real sessions through the shipped gate.")
     print(f"{'session':26} {label_a:>13} {label_b:>13}  {'chars saved':>12}  agreement")
@@ -121,8 +140,8 @@ def main() -> int:
         saved = len(p_old) - len(p_new)
         saved_total += saved
         try:
-            v_old, sc_old = judge(p_old)
-            v_new, sc_new = judge(p_new)
+            v_old, sc_old = judge(p_old, args.votes)
+            v_new, sc_new = judge(p_new, args.votes)
         except Exception as e:
             print(f"{s.name[:26]:26} ERROR: {str(e)[:60]}")
             continue
