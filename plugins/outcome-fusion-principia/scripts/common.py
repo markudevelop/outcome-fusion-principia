@@ -770,6 +770,25 @@ def project_signals(cwd: Path) -> str:
     return "\n".join(parts) or "No project signals detected."
 
 
+def _tool_result_text(content: Any, per_block: int = 800) -> str:
+    """Flatten a tool_result payload, bounded so one huge output cannot dominate.
+
+    Keeps the head and the TAIL: pass/fail counts, tracebacks and error lines
+    land at the end of command output, and a head-only truncation would cut off
+    exactly the part that decides the verdict.
+    """
+    if isinstance(content, list):
+        parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
+        text = "\n".join(p for p in parts if p)
+    else:
+        text = content if isinstance(content, str) else ("" if content is None else str(content))
+    text = text.strip()
+    if len(text) <= per_block:
+        return text
+    half = per_block // 2
+    return f"{text[:half]}\n... [{len(text) - per_block:,} chars omitted] ...\n{text[-half:]}"
+
+
 def recent_transcript_text(path_str: str, limit_chars: int = 50000) -> str:
     if not path_str:
         return ""
@@ -792,11 +811,22 @@ def recent_transcript_text(path_str: str, limit_chars: int = 50000) -> str:
         if isinstance(content, list):
             chunks: list[str] = []
             for item in content:
-                if isinstance(item, dict):
-                    if item.get("type") == "text":
-                        chunks.append(item.get("text", ""))
-                    elif item.get("type") == "tool_use":
-                        chunks.append(f"tool_use {item.get('name')}: {item.get('input')}")
+                if not isinstance(item, dict):
+                    continue
+                kind = item.get("type")
+                if kind == "text":
+                    chunks.append(item.get("text", ""))
+                elif kind == "tool_use":
+                    chunks.append(f"tool_use {item.get('name')}: {item.get('input')}")
+                elif kind == "tool_result":
+                    # Previously dropped, so the judge saw every tool CALL and no
+                    # tool OUTCOME — a run of commands read as if all had
+                    # succeeded. Measured on a real transcript: 15 tool_result
+                    # blocks in the last 180 lines, 0 extracted. The failures,
+                    # tracebacks and "3 passed, 12 skipped" lines the doctrine
+                    # asks the judge to catch all live in here.
+                    chunks.append(f"tool_result{' [ERROR]' if item.get('is_error') else ''}: "
+                                  f"{_tool_result_text(item.get('content'))}")
             content = "\n".join(chunks)
         if isinstance(content, str) and content.strip():
             picked.append(f"{role}: {content.strip()}")
