@@ -737,3 +737,58 @@ def test_run_cmd_keeps_the_failing_commands_own_output():
     out = common.run_cmd("git rev-parse --verify definitely-not-a-ref", pathlib.Path("."), timeout=15)
     assert "command failed" in out.lower()
     assert len(out.strip()) > len("[command failed: exit 128]"), "git's own message was discarded"
+
+
+# ---- proof ledger signal-to-noise -------------------------------------------
+#
+# Measured on a real 160k-char ledger: auto-generated evidence stubs were 60% of
+# blocks and 39% of the file, and inside the 30k the judge actually reads only 8
+# real claims survived among 14 stubs. The plugin was diluting its own evidence.
+
+def test_normalize_cmd_strips_the_shell_prologue():
+    assert common.normalize_cmd('cd "C:/a b/repo" && pytest -q') == "pytest -q"
+    assert common.normalize_cmd("cd /home/x/repo && ruff check .") == "ruff check ."
+    assert common.normalize_cmd("cd 'C:/a b' && npm test") == "npm test"
+    assert common.normalize_cmd("pytest -q") == "pytest -q"
+
+
+def test_normalize_cmd_collapses_whitespace_and_bounds_length():
+    assert common.normalize_cmd("pytest   -q\n  -x") == "pytest -q -x"
+    assert len(common.normalize_cmd("x" * 500)) == 160
+
+
+def test_dedup_now_matches_across_different_working_directories(tmp_path):
+    # The `cd "<path>" &&` prefix made every invocation a unique string, so the
+    # old dedup never fired on a repeated check run from a different shell.
+    (tmp_path / "proof.md").write_text("- 10:00:00 check ran: `pytest -q` (output in tool_log.md)\n", encoding="utf-8")
+    assert common.evidence_already_recorded(tmp_path, 'cd "C:/some/repo" && pytest -q')
+    assert common.evidence_already_recorded(tmp_path, "cd /other/repo && pytest -q")
+    assert not common.evidence_already_recorded(tmp_path, "ruff check .")
+
+
+def test_dedup_scans_the_whole_ledger_not_just_the_tail(tmp_path):
+    # Old limit was 6000 chars, so a check recorded early in a long session was
+    # re-recorded every time it ran again.
+    body = "- 10:00:00 check ran: `pytest -q` (output in tool_log.md)\n" + ("filler line\n" * 3000)
+    (tmp_path / "proof.md").write_text(body, encoding="utf-8")
+    assert len(body) > 30000
+    assert common.evidence_already_recorded(tmp_path, "pytest -q")
+
+
+def test_captured_check_is_one_compact_line(tmp_path):
+    rc, _ = _run_hook(
+        "capture_tool.py",
+        {"cwd": str(tmp_path), "session_id": "s-cap", "hook_event_name": "PostToolUse",
+         "tool_name": "Bash", "tool_input": {"command": 'cd "C:/repo" && pytest -q'},
+         "tool_response": "2 passed"},
+        tmp_path,
+    )
+    assert rc == 0
+    proof = (tmp_path / ".ai" / "outcome_fusion" / "sessions" / "sid_s-cap" / "proof.md").read_text(encoding="utf-8")
+    entry = [ln for ln in proof.splitlines() if "check ran:" in ln]
+    assert len(entry) == 1, proof
+    assert "`pytest -q`" in entry[0], entry
+    assert len(entry[0]) < 120, f"entry is not compact: {len(entry[0])} chars"
+    # The old four-line stub restated boilerplate the judge already had.
+    assert "Claim checked by command" not in proof
+    assert "Remaining risk: Claude must interpret" not in proof

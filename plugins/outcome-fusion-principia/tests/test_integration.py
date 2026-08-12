@@ -152,5 +152,10 @@ def test_capture_tool_dedups_repeated_evidence(tmp_path):
                "tool_input": {"command": "pytest -q"}, "tool_response": "ok"}
     for _ in range(3):
         assert _run_hook("capture_tool.py", payload, cwd).returncode == 0
+    # Same check from a different working directory must also dedup: the
+    # `cd "<path>" &&` prologue used to make every invocation a unique string.
+    payload_cd = dict(payload, tool_input={"command": 'cd "C:/elsewhere" && pytest -q'})
+    assert _run_hook("capture_tool.py", payload_cd, cwd).returncode == 0
+
     proof = (ws / "proof.md").read_text(encoding="utf-8")
-    assert proof.count("Claim checked by command: `pytest -q`") == 1
+    assert proof.count("check ran: `pytest -q`") == 1, proof

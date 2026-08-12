@@ -965,15 +965,32 @@ def summarize_metrics(wdir: Path) -> dict[str, Any]:
     }
 
 
-def evidence_already_recorded(wdir: Path, cmd: str) -> bool:
-    """True if this exact verification command is already in the recent proof tail.
+_CD_PREFIX = re.compile(r"^\s*cd\s+(?:\"[^\"]*\"|'[^']*'|\S+)\s*&&\s*", re.I)
 
-    Stops the proof ledger from filling with one identical Evidence block per
-    repeated test/lint/build invocation.
+
+def normalize_cmd(cmd: str, limit: int = 160) -> str:
+    """Strip the shell prologue so the same check looks the same every time.
+
+    Commands arrive as `cd "C:/long/path" && pytest -q`, which made every
+    invocation a unique string: the dedup below never fired, and the ledger
+    filled with one near-identical block per run.
+    """
+    out = _CD_PREFIX.sub("", (cmd or "").strip())
+    out = " ".join(out.split())
+    return out[:limit]
+
+
+def evidence_already_recorded(wdir: Path, cmd: str) -> bool:
+    """True if this verification command is already recorded in the ledger.
+
+    Compares the NORMALISED command against the whole file, not the raw string
+    against the last 6k characters. Measured on a real 160k-char ledger: 60% of
+    blocks were auto-generated stubs consuming 39% of the file, and inside the
+    30k the judge actually reads only 8 real claims survived among 14 stubs.
     """
     if not cmd:
         return True
-    return f"`{cmd}`" in safe_read(wdir / "proof.md", limit=6000)
+    return f"`{normalize_cmd(cmd)}`" in safe_read(wdir / "proof.md", limit=400000)
 
 
 # Distinct evaluation lenses for self-consistency voting. Diversity of
