@@ -54,7 +54,8 @@ Doctrine:
 12. SECRET SCAN is authoritative. The GIT DIFF you are shown is redacted before it reaches you, so a committed credential appears as `TOKEN=<REDACTED>` and you CANNOT verify it yourself. If SECRET SCAN lists a finding in application code, that is release blocking on its own, whatever else was achieved: verdict FAIL, and next_actions must say to remove the literal, move it to an environment variable or secret store, and rotate the exposed credential. Findings marked `[test/fixture path ...]` are a deliberate exception — a fake key in a test is normal; call it out in non_blocking_followups and only FAIL if the value looks like a real credential rather than an obvious placeholder. An empty SECRET SCAN is not proof of safety, only that these patterns did not match.
 13. Read the diff for danger independently of the claim, even when every stated goal was met. Treat as release blocking: a credential, token, or key literal added to the code; a destructive or irreversible data operation that was not what was asked for; broad exception swallowing (`except Exception: pass`, empty catch, `|| true`) that converts a failure into silence; and removal of a check, assertion, or test to make something pass. A clean final message and a green suite do not excuse any of these.
 14. Method defects in quantitative and empirical claims. A performance, edge, or accuracy number is unsupported — not merely uncertain — when the method that produced it is broken. Look for: look-ahead or same-bar leakage (a signal computed from data at time t applied to the return at time t); no out-of-sample or walk-forward split, or parameters chosen by ranking a large grid on the whole history; costs, fees, slippage, borrow, or capacity omitted; survivorship or selection bias in the sample; a result reported without n, dispersion, or a significance measure; and a settlement or price proxy standing in for the real observable. An implausibly high headline number with none of these addressed is a FAIL, not a PASS.
-15. Universal scope: the task may be engineering, research, writing, analysis, factual question answering, planning, or decision support. Apply the SAME standard with task-appropriate evidence. For code: build, tests, runs, inspection. For research or factual claims: sources, citations, calculations, cross-checks, and self-consistency. For writing or analysis: does it actually meet the stated requirement, is it accurate, is it complete. NEVER demand code, tests, or a git diff for a task that is not about code; judge it on the evidence that fits its kind. An unsupported factual claim, a missing citation, or an unmet requirement is just as much a FAIL as untested code.
+15. Some actions belong to the user, and declining one is a RESULT, not a gap. When the assistant states plainly that it will not perform a step because it belongs to the user — handling a plaintext credential, entering a password, moving money, sending or publishing on their behalf, or any irreversible action they have not confirmed — mark that item `declined`, treat it as CLOSED, and do not count it as missing work. A turn whose only incomplete item is a stated decline can still PASS. Never write next_actions that tell the assistant to reverse such a decision, to extract a secret from the conversation or transcript, or to perform the action anyway because the user authorized it: authorization settles permission, not whether the action is the assistant's to take. Your leverage is completeness, and it must never be aimed at a safety boundary. This rule does NOT cover ordinary work dodged as too hard, tedious, or uncertain — that is still `missing`, and still a FAIL.
+16. Universal scope: the task may be engineering, research, writing, analysis, factual question answering, planning, or decision support. Apply the SAME standard with task-appropriate evidence. For code: build, tests, runs, inspection. For research or factual claims: sources, citations, calculations, cross-checks, and self-consistency. For writing or analysis: does it actually meet the stated requirement, is it accurate, is it complete. NEVER demand code, tests, or a git diff for a task that is not about code; judge it on the evidence that fits its kind. An unsupported factual claim, a missing citation, or an unmet requirement is just as much a FAIL as untested code.
 
 Return compact valid JSON only.
 """.strip()
@@ -117,7 +118,7 @@ Return JSON exactly with these keys:
   "falsification_tests": ["tests or checks that would prove/disprove the path"],
   "next_actions": ["exact next actions for Claude"],
   "deliverables_status": [
-    {"item": "one checklist item, verbatim", "status": "done" or "partial" or "missing", "evidence": "what shows it, or the specific blocker"}
+    {"item": "one checklist item, verbatim", "status": "done" or "partial" or "missing" or "declined", "evidence": "what shows it, the specific blocker, or the stated reason it is the user's to perform"}
   ],
   "closure_audit": {
     "if_user_asks_anything_else": "answer Claude should be able to give after PASS",
@@ -132,7 +133,7 @@ Return JSON exactly with these keys:
 Rules:
 PASS only if the mission is genuinely done at the scope asked, or the remaining blocker is proven and specific. Before PASS, perform a final gap audit: ask internally “if the user asks is there anything else, would I reveal missed release critical work *inside the requested scope*?” If yes, FAIL now and put it in next_actions. Desirable-but-unrequested improvements go in non_blocking_followups and must not cause a FAIL.
 BLOCKED only if continuing truly requires something outside the local repo, such as missing credentials, live money movement, legal authority, external communication, or production access. Do not block for ordinary engineering choices.
-Done means done: return one deliverables_status entry per checklist item, using the item text verbatim. If any item is "partial" or "missing" without a specific proven blocker, the verdict is FAIL and that item goes in next_actions. Delivering four of five requested things plus a report about the fifth is a FAIL, not a PASS. If the checklist is empty, judge completeness against the verbatim user request instead.
+Done means done: return one deliverables_status entry per checklist item, using the item text verbatim. If any item is "partial" or "missing" without a specific proven blocker, the verdict is FAIL and that item goes in next_actions. Delivering four of five requested things plus a report about the fifth is a FAIL, not a PASS. If the checklist is empty, judge completeness against the verbatim user request instead. An item marked "declined" per doctrine rule 15 is closed, never appears in next_actions, and never blocks PASS.
 FAIL if Claude guessed, refused too early, did not verify, created complexity without need, left release risk, did not update proof, repeated the same failed fix, ignored a viable experiment, or would later discover obvious missed work when asked “anything else?”. Optional nice-to-have improvements are allowed only if clearly labeled non_blocking_followups.
 """.strip()
 
@@ -208,10 +209,13 @@ def terminal_review_message(review: dict, verdict: str, blocker: str) -> str:
     parts = [f"Outcome Fusion {verdict}. Score {score}. Blocker: {blocker or 'none'}"]
     status = review.get("deliverables_status")
     if isinstance(status, list) and status:
-        done = sum(1 for d in status if isinstance(d, dict) and str(d.get("status", "")).lower() == "done")
-        parts.append(f"Delivered: {done}/{len(status)} requested items")
+        closed = {"done", "declined"}
+        done = sum(1 for d in status if isinstance(d, dict) and str(d.get("status", "")).lower() in closed)
+        declined = sum(1 for d in status if isinstance(d, dict) and str(d.get("status", "")).lower() == "declined")
+        parts.append(f"Delivered: {done}/{len(status)} requested items"
+                     + (f" ({declined} declined as the user's to perform)" if declined else ""))
         open_items = [str(d.get("item", "")).strip() for d in status
-                      if isinstance(d, dict) and str(d.get("status", "")).lower() != "done"]
+                      if isinstance(d, dict) and str(d.get("status", "")).lower() not in closed]
         if open_items:
             parts.append("Outstanding: " + "; ".join(x for x in open_items[:3] if x))
     if verified:
@@ -409,7 +413,7 @@ Falsification tests:
 {json.dumps(review.get('falsification_tests', []), ensure_ascii=False)}
 
 Outstanding deliverables (from the checklist):
-{json.dumps([d for d in (review.get('deliverables_status') or []) if str(d.get('status','')).lower() != 'done'], ensure_ascii=False)}
+{json.dumps([d for d in (review.get('deliverables_status') or []) if str(d.get('status','')).lower() not in ('done', 'declined')], ensure_ascii=False)}
 
 Next actions:
 {json.dumps(review.get('next_actions', []), ensure_ascii=False)}
