@@ -504,3 +504,30 @@ def test_eval_harness_supplies_every_gate_placeholder():
     )
     assert not re.search(r"\{(user_request|deliverables|mission|proof|tool_log|git_diff|transcript|last_message|signals|git_status|diff_hash|loop_state|lazy_impossible)\}", rendered)
     assert "1. Add the retry decorator" in rendered
+
+
+# ---- the documented master switch actually disables everything --------------
+
+@pytest.mark.parametrize("script", [
+    "session_context.py", "compile_prompt.py", "capture_tool.py",
+    "batch_feedback.py", "release_gate.py", "stop_failure.py",
+])
+def test_every_hook_honours_the_master_switch(script, tmp_path):
+    # README calls OUTCOME_FUSION_ENABLED the "master switch for all hooks".
+    # capture_tool, batch_feedback and stop_failure used to ignore it and keep
+    # writing to the workspace, so the documented claim was false.
+    src = (SCRIPTS / script).read_text(encoding="utf-8")
+    assert 'env_bool("OUTCOME_FUSION_ENABLED"' in src, f"{script} ignores the master switch"
+
+    env = dict(os.environ)
+    env["OUTCOME_FUSION_ENABLED"] = "0"
+    env.pop("DEEPSEEK_API_KEY", None)
+    p = subprocess.run(
+        [sys.executable, str(SCRIPTS / script)],
+        input=json.dumps({"cwd": str(tmp_path), "session_id": "s-off", "prompt": "add a feature",
+                          "tool_name": "Bash", "tool_input": {"command": "pytest -q"}}),
+        capture_output=True, text=True, cwd=str(tmp_path), env=env, timeout=60,
+    )
+    assert p.returncode == 0
+    assert p.stdout.strip() == "", f"{script} still emitted output while disabled"
+    assert not (tmp_path / ".ai").exists(), f"{script} still wrote a workspace while disabled"

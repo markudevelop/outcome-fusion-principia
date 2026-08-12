@@ -6,6 +6,8 @@ from common import cwd_from_hook, env_bool, mirror_latest, read_stdin_json, safe
 
 def main() -> int:
     payload = read_stdin_json()
+    if not env_bool("OUTCOME_FUSION_ENABLED", True):
+        return 0
     if not env_bool("OUTCOME_FUSION_BATCH_HINTS", True):
         return 0
     calls = payload.get("tool_calls") or []
