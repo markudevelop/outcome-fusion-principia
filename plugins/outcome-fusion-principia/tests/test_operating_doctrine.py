@@ -792,3 +792,49 @@ def test_captured_check_is_one_compact_line(tmp_path):
     # The old four-line stub restated boilerplate the judge already had.
     assert "Claim checked by command" not in proof
     assert "Remaining risk: Claude must interpret" not in proof
+
+
+# ---- tool log framing -------------------------------------------------------
+#
+# Measured on 43 real sessions: a raw character tail started mid-entry in 43/43,
+# so the first thing the judge read was always a fragment. Entry-aware framing
+# shows 1.42x more whole entries in the same budget (5.0 -> 7.1 average).
+
+def _log(n, size=300):
+    return "".join(f"## 2026-08-{i+1:02d} 10:00:00 PostToolUse Bash\n" + ("x" * size) + "\n" for i in range(n))
+
+
+def test_tail_tool_log_returns_whole_entries_only():
+    out = common.tail_tool_log(_log(20), budget=2000)
+    assert out.lstrip().startswith("## 2026-"), "output still begins mid-entry"
+    assert len(out) <= 2000
+
+
+def test_tail_tool_log_keeps_the_most_recent_entries():
+    out = common.tail_tool_log(_log(20), budget=2000)
+    assert "2026-08-20" in out, "newest entry missing"
+    assert "2026-08-01" not in out, "kept the oldest instead of the newest"
+
+
+def test_one_giant_entry_cannot_consume_the_whole_window():
+    text = _log(5, size=200) + "## 2026-09-01 10:00:00 PostToolUse Bash\nSTART" + ("y" * 40000) + "END\n"
+    out = common.tail_tool_log(text, budget=12000, per_entry=2500)
+    assert "chars omitted" in out, "giant entry was not capped"
+    assert out.count("## 2026-") >= 3, f"only {out.count('## 2026-')} entries survived a giant one"
+    assert "START" in out and "END" in out, "head and tail of the capped entry must both survive"
+
+
+def test_tail_tool_log_handles_a_log_with_no_entry_headers():
+    assert common.tail_tool_log("no headers here", budget=100) == "no headers here"
+    assert common.tail_tool_log("", budget=100) == ""
+
+
+def test_single_entry_larger_than_the_budget_still_returns_something():
+    out = common.tail_tool_log("## 2026-08-01 10:00:00 X\n" + ("z" * 50000), budget=1000, per_entry=900)
+    assert out and len(out) <= 1000
+
+
+def test_gate_uses_entry_aware_framing():
+    src = (SCRIPTS / "release_gate.py").read_text(encoding="utf-8")
+    assert "tail_tool_log(" in src
+    assert "OUTCOME_FUSION_MAX_TOOLLOG_ENTRY_CHARS" in src
