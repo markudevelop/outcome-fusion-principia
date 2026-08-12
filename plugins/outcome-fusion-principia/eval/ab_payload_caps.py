@@ -92,6 +92,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=".", help="repo containing .ai/outcome_fusion/sessions")
     ap.add_argument("--n", type=int, default=8, help="how many sessions to replay")
+    ap.add_argument("--control", action="store_true",
+                    help="NOISE FLOOR: judge each session twice at the SAME caps. "
+                         "Without this the A/B is uninterpretable — judge verdicts are "
+                         "stochastic, so some disagreement is noise, not the caps.")
     args = ap.parse_args()
 
     sessions_root = pathlib.Path(args.root).resolve() / ".ai" / "outcome_fusion" / "sessions"
@@ -100,13 +104,20 @@ def main() -> int:
         print(f"No sessions under {sessions_root} large enough for the caps to bite.")
         return 1
 
-    print(f"Replaying {len(sessions)} real sessions through the shipped gate at both cap settings.")
-    print(f"{'session':26} {'pre-0.7.0':>12} {'0.7.0':>12}  {'chars saved':>12}  agreement")
+    # In control mode both arms use the CURRENT caps, so any disagreement is
+    # judge noise rather than an effect of the payload size.
+    caps_a = NEW_CAPS if args.control else OLD_CAPS
+    label_a = "0.7.0 run A" if args.control else "pre-0.7.0"
+    label_b = "0.7.0 run B" if args.control else "0.7.0"
+    mode = "NOISE FLOOR (same caps twice)" if args.control else "A/B (old caps vs new caps)"
+
+    print(f"{mode}: {len(sessions)} real sessions through the shipped gate.")
+    print(f"{'session':26} {label_a:>13} {label_b:>13}  {'chars saved':>12}  agreement")
     agree = flips = 0
     stricter = looser = 0
     saved_total = 0
     for s in sessions:
-        p_old, p_new = build_prompt(s, OLD_CAPS), build_prompt(s, NEW_CAPS)
+        p_old, p_new = build_prompt(s, caps_a), build_prompt(s, NEW_CAPS)
         saved = len(p_old) - len(p_new)
         saved_total += saved
         try:
@@ -131,10 +142,17 @@ def main() -> int:
     print("\n=== SUMMARY ===")
     if n:
         print(f"verdict agreement : {agree}/{n} ({100*agree/n:.0f}%)")
-        print(f"flips             : {flips}  (smaller payload stricter: {stricter}, looser: {looser})")
+        if args.control:
+            print(f"flips             : {flips}   <- NOISE FLOOR (identical input both runs)")
+            print("\nCompare with the A/B run. If A/B disagreement is not clearly worse than")
+            print("this floor, the caps are not what moved the verdicts.")
+        else:
+            print(f"flips             : {flips}  (smaller payload stricter: {stricter}, looser: {looser})")
+            print("\nRun again with --control before attributing any of this to the caps:")
+            print("judge verdicts are stochastic, so some disagreement is noise.")
     print(f"prompt chars saved: {saved_total:,} across {len(sessions)} sessions "
           f"(~{saved_total//4:,} tokens, x{common.env_int('OUTCOME_FUSION_GATE_VOTES', 3)} votes per gate call)")
-    if flips and looser:
+    if flips and looser and not args.control:
         print("\nNOTE: a LOOSER verdict on less context is the failure mode that matters —")
         print("it means the truncated evidence hid a real problem. Raise the caps via")
         print("OUTCOME_FUSION_MAX_PROOF_CHARS / OUTCOME_FUSION_MAX_TOOLLOG_CHARS.")
