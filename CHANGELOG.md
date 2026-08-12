@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.8.3 — the framing feature was asserted, not tested
+
+### Tests
+
+- **19 behavioural tests for "Better framing"** (`tests/test_better_framing.py`).
+  Its three existing tests were `assert "<string>" in TEMPLATE` — the same
+  string-presence kind this suite was built to replace. They proved the
+  instruction had been authored, not that the feature did anything: the section
+  could have been stripped by mission cleaning, never reached Claude, fired on
+  question turns, or taken the whole mission down when the model omitted it, and
+  all three would still have passed.
+  The new tests drive the real compile hook across four dimensions — prompt and
+  reframe logic, the config/skip matrix (question turn, plugin disabled, offline
+  fallback), failure handling (omitted section, framing without a checklist,
+  crashing compiler, malformed output, a credential inside the framing), and
+  end-to-end delivery into the context Claude actually reads.
+- **Mutation set grown to 25, all caught** — six of them aimed at the framing
+  feature itself, so a broken framing now fails the suite.
+
+### Fixed in the tests themselves
+
+- **A mutant survived and exposed a real hole.** Renaming the section to
+  `# Better framing REMOVED` still satisfied `"# Better framing" in body`, so the
+  feature could have been deleted from the template with nothing failing. Both
+  the new test and the older doctrine test now match the **exact heading line**
+  and assert the instruction content, not just the title.
+
+**282 tests.**
+
 ## 0.8.2 — the judge saw every tool call and no tool outcome
 
 ### Fixed

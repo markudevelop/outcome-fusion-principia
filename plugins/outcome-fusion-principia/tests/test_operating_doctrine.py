@@ -962,10 +962,14 @@ def test_compiler_falls_back_rather_than_writing_a_scratchpad(tmp_path, monkeypa
 
 def test_mission_template_asks_whether_the_request_is_the_right_one():
     t = compile_prompt.TEMPLATE
-    assert "# Better framing" in t
+    # EXACT heading: "# Better framing REMOVED" contains the substring and would
+    # otherwise pass, which is how this mutant survived the first run.
+    framing = re.search(r"^# Better framing\s*$", t, re.M)
+    checklist = re.search(r"^# Deliverables checklist\s*$", t, re.M)
+    assert framing and checklist
     assert "underlying goal" in t.lower()
     # Placed before the checklist: framing must be available before scope locks.
-    assert t.index("# Better framing") < t.index("# Deliverables checklist")
+    assert framing.start() < checklist.start()
 
 
 def test_framing_is_licensed_to_say_none():
