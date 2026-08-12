@@ -902,3 +902,83 @@ def test_declined_item_is_not_echoed_into_the_continue_prompt():
     outstanding = [d for d in review["deliverables_status"]
                    if str(d.get("status", "")).lower() not in ("done", "declined")]
     assert [d["item"] for d in outstanding] == ["Write the docs"]
+
+
+# ---- mission compiler: reasoning leak ---------------------------------------
+#
+# Measured across 67 real missions on disk: 73% began with raw chain-of-thought
+# ("We need to parse the user prompt...") and 84% were missing at least one
+# required section — including the deliverables checklist the gate measures
+# completeness against. The scratchpad was being injected into Claude's context
+# AS its operating instruction.
+
+def test_clean_mission_drops_reasoning_preamble():
+    raw = ("We need to parse the user prompt and compile a mission. We should be concise.\n\n"
+           "# Mission\nFix the import.\n\n# Deliverables checklist\n1. Fix it\n")
+    out = common.clean_mission(raw)
+    assert out.startswith("# Mission")
+    assert "We need to parse" not in out
+
+
+def test_clean_mission_leaves_a_clean_document_alone():
+    doc = "# Mission\nDo the thing.\n\n# Deliverables checklist\n1. Thing\n"
+    assert common.clean_mission(doc) == doc.rstrip()
+
+
+def test_clean_mission_handles_no_heading_at_all():
+    # Pure scratchpad that never produced a document: nothing to recover.
+    assert common.clean_mission("We need to think about this and then") != ""
+    assert common.clean_mission("") == ""
+
+
+def test_mission_is_usable_requires_the_checklist():
+    # A mission without the deliverables checklist makes the gate judge
+    # completeness against a list that was never written.
+    assert common.mission_is_usable("# Mission\nx\n# Deliverables checklist\n1. y")
+    assert not common.mission_is_usable("# Mission\nx\n# Hypothesis map\n- z")
+    assert not common.mission_is_usable("We need to parse the prompt...")
+    assert not common.mission_is_usable("")
+
+
+def test_compiler_falls_back_rather_than_writing_a_scratchpad(tmp_path, monkeypatch):
+    # With no API key the call raises and default_mission is used; the written
+    # file must always be a usable mission, never raw model output.
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    rc, _ = _run_hook("compile_prompt.py",
+                      {"cwd": str(tmp_path), "session_id": "s-fb", "prompt": "fix the import"}, tmp_path)
+    assert rc == 0
+    mission = (tmp_path / ".ai" / "outcome_fusion" / "sessions" / "sid_s-fb" / "mission.md").read_text(encoding="utf-8")
+    assert common.mission_is_usable(mission), mission[:200]
+    assert mission.lstrip().startswith("#")
+
+
+# ---- better framing ---------------------------------------------------------
+#
+# Measured across 60 real reviews: a framing challenge ("is this even the right
+# ask?") appeared in 1 of 60. The instruction existed, buried mid-sentence in a
+# scope paragraph otherwise about NOT expanding scope, and never fired.
+
+def test_mission_template_asks_whether_the_request_is_the_right_one():
+    t = compile_prompt.TEMPLATE
+    assert "# Better framing" in t
+    assert "underlying goal" in t.lower()
+    # Placed before the checklist: framing must be available before scope locks.
+    assert t.index("# Better framing") < t.index("# Deliverables checklist")
+
+
+def test_framing_is_licensed_to_say_none():
+    # Without this it manufactures an alternative for every trivial request.
+    t = compile_prompt.TEMPLATE.lower()
+    assert "none - the request is the direct route." in t
+    assert "a manufactured alternative is worse than none" in t
+
+
+def test_framing_is_advisory_and_cannot_change_scope():
+    t = compile_prompt.TEMPLATE.lower()
+    assert "advisory" in t
+    assert "never changes scope" in t
+    low = release_gate.SYSTEM.lower()
+    assert '"better framing" section is advisory' in low
+    assert "never fail because no alternative was proposed" in low

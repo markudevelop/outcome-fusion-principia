@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.8.0 — the mission was the model's scratchpad, and nothing asked if the request was right
+
+### Fixed
+
+- **73% of compiled missions were raw chain-of-thought.** The compiler wrote
+  whatever came back straight to `mission.md`, and reasoning models narrate
+  before answering. Measured across 67 real missions on disk: **49 (73%) began
+  with "We need to parse the user prompt..."** and **56 (84%) were missing at
+  least one required section** — including the deliverables checklist the
+  release gate measures completeness against. One capture was 12,470 characters
+  of pure scratchpad with **zero** markdown headings, truncated mid-word at the
+  token cap. That text was injected into Claude's context AS its operating
+  instruction. Reproduced against the pre-change template, so it was
+  pre-existing, not introduced here.
+  `clean_mission()` now cuts everything before the first heading (deterministic —
+  it does not rely on the model obeying an instruction it has already ignored),
+  `mission_is_usable()` requires `# Mission` and `# Deliverables checklist`, and
+  the compiler retries once naming the failure mode before falling back to the
+  static mission rather than writing a scratchpad. Verified: 4/4 real prompts
+  now produce clean, usable missions, 0/4 starting with reasoning.
+- **The fallback mission had no deliverables checklist**, so whenever compilation
+  failed the gate judged completeness against a list that did not exist. It now
+  carries one pointing at the verbatim request.
+
+### Added
+
+- **`# Better framing`** — the mission now asks whether the request is the right
+  request, BEFORE the work starts. Measured across 60 real reviews: a framing
+  challenge appeared in **1 of 60 (2%)**, and that one arrived at the gate after
+  the work was done, reading as criticism rather than redirection. The
+  instruction existed, buried mid-sentence in a scope paragraph otherwise about
+  NOT expanding scope, and never fired.
+  It is explicitly licensed to answer `"None - the request is the direct route."`
+  — a manufactured alternative is worse than none — and the gate doctrine marks
+  it ADVISORY: never a FAIL for executing the request as asked, never a FAIL for
+  proposing no alternative.
+
+  | Prompt | Framing produced |
+  |---|---|
+  | `run the tests` | *None - the request is the direct route.* |
+  | `make the backtest CAGR higher` | flags curve-fitting; proposes walk-forward / out-of-sample |
+  | `add a caching layer so the dashboard loads faster` | *"Goal is a faster dashboard, not necessarily a cache — profile first"* |
+
 ## 0.7.4 — the gate must not escalate against a safety boundary
 
 ### Fixed
