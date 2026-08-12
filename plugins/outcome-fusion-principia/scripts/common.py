@@ -415,6 +415,157 @@ def should_skip_prompt(prompt: str) -> bool:
     return False
 
 
+# --- intent router -----------------------------------------------------------
+# A question is a question. Claude Opus 5 expands scope on its own judgment, and
+# this plugin used to amplify that: EVERY prompt — including "what does this do?"
+# — was compiled into a full "execute release ready" mission and then judged by a
+# 3-vote release gate that forced continuation. That turns an answer into an
+# unasked-for implementation and burns a mission compile + 3 judge calls per
+# question. Routing on intent is the fix: build prompts get the full apparatus,
+# question prompts get an answer-only instruction and no gate.
+
+# Imperative verbs that mean "change something". Presence of any of these makes
+# the prompt a BUILD prompt even if it is phrased as a question ("can you add X?").
+_BUILD_VERBS = re.compile(
+    r"\b(implement|build|create|add|write|fix|refactor|rewrite|migrate|port|"
+    r"deploy|ship|publish|commit|push|merge|install|upgrade|update|change|"
+    r"modify|edit|remove|delete|drop|rename|replace|optimi[sz]e|improve|"
+    r"clean\s?up|set\s?up|configure|generate|make|run|execute|backtest|"
+    r"benchmark|profile|debug|patch|revert|bump|scaffold|wire|hook\s?up|"
+    r"integrate|automate|harden|refit|retrain|tune|"
+    # Action verbs that carry work even when phrased as "can you ...?".
+    # Added after replaying 474 real prompts from this project and auditing every
+    # question-mode classification by hand.
+    r"brute[\s-]?force|sweep|screen|scan|harvest|backfill|export|import|"
+    r"plot|chart|render|train|fit|simulate|replay|audit|review|validate|"
+    r"verify|check|investigate|diagnose|reproduce|repro|measure|rerun|"
+    r"re-?run|kick\s?off|land|set|move|use|apply|enable|disable|switch|swap|"
+    r"store|save|sync|track|reduce|increase|lower|raise|resize|test|retest)\b",
+    re.I,
+)
+
+# Phrases that state a want or a directive. These beat any interrogative shape:
+# "i need this on the website" and "ok lets use the new one" are work orders even
+# though they read like conversation.
+_IMPERATIVE_MARKERS = re.compile(
+    r"\b(let'?s|lets|i want|i'd like|i would like|i need|we need|we should|"
+    r"should be|must be|make sure|go ahead|please do|do it|do this|do that|"
+    r"do all|do both|do everything|carry on|proceed)\b",
+    re.I,
+)
+
+# A reported defect is a work order, not a question, however it is punctuated:
+# "again it seems we had an issue with the publisher?" wants a fix, not an essay.
+_PROBLEM_MARKERS = re.compile(
+    r"\b(bug|broken|is wrong|shows? wrong|isn'?t working|is not working|"
+    r"not working|does ?n'?t work|do ?n'?t work|failed|failing|fails|error|"
+    r"issue|crash(?:ed|ing)?|stuck|hangs?|missing|wrong|"
+    r"no signal|not updated|did ?n'?t update|out of date|stale)\b",
+    re.I,
+)
+
+# Bare "do X" is an order ("do it all", "do 2% for her"); "do you/we/..." is a
+# question. Everything after `do ` that is not one of these subjects is an order.
+_DO_QUESTION_SUBJECTS = re.compile(r"^do\s+(you|we|i|they|he|she|these|those|any|most|all\s+of)\b", re.I)
+
+# Interrogative openers / shapes that mean "tell me", not "do it".
+_QUESTION_OPENERS = re.compile(
+    r"^(what|why|how|when|where|which|who|whose|is|are|was|were|does|did|"
+    r"can|could|should|would|will|has|have|had|am|explain|describe|compare|"
+    r"tell\s+me|walk\s+me|any\s+idea|thoughts)\b",
+    re.I,
+)
+
+INTENT_BUILD = "build"
+INTENT_QUESTION = "question"
+
+
+def classify_intent(prompt: str) -> str:
+    """Classify a raw user prompt as a question or a build request.
+
+    Deliberately biased toward BUILD: a build prompt misread as a question loses
+    the mission and the gate (soft failure), while a question misread as a build
+    triggers unrequested implementation (the failure mode we are removing). Any
+    imperative verb anywhere in the prompt wins.
+
+    Explicit overrides: a prompt starting with ``build:`` / ``do:`` forces build,
+    ``q:`` / ``ask:`` forces question. ``OUTCOME_FUSION_INTENT_ROUTER=0`` disables
+    routing entirely (pre-0.7.0 behaviour: everything is a build).
+    """
+    p = (prompt or "").strip()
+    if not p:
+        return INTENT_BUILD
+    low = p.lower()
+    if low.startswith(("build:", "do:", "task:")):
+        return INTENT_BUILD
+    if low.startswith(("q:", "ask:", "question:")):
+        return INTENT_QUESTION
+    if not env_bool("OUTCOME_FUSION_INTENT_ROUTER", True):
+        return INTENT_BUILD
+    if _BUILD_VERBS.search(low) or _IMPERATIVE_MARKERS.search(low) or _PROBLEM_MARKERS.search(low):
+        return INTENT_BUILD
+    if low.startswith("do ") and not _DO_QUESTION_SUBJECTS.match(low):
+        return INTENT_BUILD
+    if _QUESTION_OPENERS.match(low) or low.endswith("?"):
+        return INTENT_QUESTION
+    return INTENT_BUILD
+
+
+def write_turn_mode(wdir: Path, intent: str, prompt: str) -> None:
+    """Record this turn's intent so the Stop hook knows whether to gate."""
+    safe_write(
+        wdir / "turn_mode.json",
+        json.dumps({"intent": intent, "prompt_sha": sha(prompt or ""), "ts": time.time()}, ensure_ascii=False),
+    )
+
+
+def read_turn_mode(wdir: Path) -> str:
+    """Intent of the current turn. Defaults to build so the gate stays on."""
+    try:
+        data = json.loads((wdir / "turn_mode.json").read_text(encoding="utf-8"))
+        intent = str(data.get("intent") or "").strip().lower()
+        return intent if intent in {INTENT_BUILD, INTENT_QUESTION} else INTENT_BUILD
+    except Exception:
+        return INTENT_BUILD
+
+
+# --- Claude Opus 5 operating block -------------------------------------------
+# Sourced from Anthropic's "Prompting Claude Opus 5" guide (scope and
+# over-verification, narration, self-correction, deliverable length, subagent
+# spawning) plus the three CLAUDE.md blocks from productcompass.pm's
+# "How to Heal Claude Opus 5" (act don't ask / a question is a question / done
+# means done). Where the two disagree, Anthropic's guide wins: it says to REMOVE
+# explicit self-verification and re-check instructions because Opus 5 already
+# verifies itself and the instructions compound into wasted tokens. This plugin
+# keeps verification pressure only where it is out-of-band (the DeepSeek release
+# gate, a different model judging after the fact), never as a "check yourself
+# again" instruction to Claude.
+OPUS5_OPERATING_BLOCK = """
+Operating mode (tuned for Claude Opus 5):
+- Scope: deliver what was asked at the scope intended. Make routine judgment calls yourself; check in only when different readings would lead to materially different work. If the request looks mistaken or a better approach exists, say so in one sentence and continue with the task as asked rather than quietly narrowing, widening, or transforming it. Stop short of actions clearly beyond what was asked.
+- Done means done: finish every requested item. If five things were asked for, deliver five, not four and a report. If one part is genuinely blocked, finish the rest and name that blocker in one specific sentence.
+- Act, don't ask: run reversible, inexpensive steps (reading, searching, drafting, testing) without asking. Ask only before actions that reach an audience, cost real money, or cannot be undone.
+- Narration: one sentence before the first tool call, brief updates only when something important turns up or the direction changes, and a final message that leads with the outcome.
+- Corrections: correct an earlier statement only when the error changes the user's code, conclusions, or decisions. Otherwise fix it and move on without narrating it.
+- Written deliverables: match document length to what the task needs. No filler sections, redundant summaries, or boilerplate.
+- Delegation: use a subagent only for large, genuinely independent, parallelizable work. Do not delegate what you can finish in a handful of tool calls, and do not spawn subagents to double-check your own work.
+- Self-verification: you already check your own work, so do not add extra re-verification passes on top of it. The release gate in this plugin is a separate out-of-band judge; it is not your job to duplicate it.
+""".strip()
+
+QUESTION_MODE_CONTEXT = """
+Outcome Fusion classified this turn as a QUESTION, not a build request.
+
+A question is a request for information, not a mandate to implement.
+1. Answer it. Investigate as much as you need: read, search, run analyses, compute the numbers. Doing the work required to answer is expected.
+2. Do not change the project: no implementing, refactoring, renaming, or "improving" anything the user did not ask for.
+3. If you spot work worth doing, name it in one line and let the user decide.
+4. Lead with the answer and keep it as short as the question deserves.
+
+No mission was compiled and the release gate is off for this turn, so nothing will
+force you to keep working. Prefix a prompt with `build:` to force full mission mode.
+""".strip()
+
+
 def project_signals(cwd: Path) -> str:
     parts: list[str] = []
     markers = [
@@ -498,17 +649,21 @@ def extract_text_from_anthropic_response(data: dict[str, Any]) -> str:
     return ""
 
 
-def call_deepseek(system: str, user: str, *, max_tokens: int = 4000, temperature: float = 0.15, json_mode: bool = False, timeout: int = 120) -> str:
+def call_deepseek(system: str, user: str, *, max_tokens: int = 4000, temperature: float = 0.15, json_mode: bool = False, timeout: int = 120, effort: str | None = None) -> str:
     api_key = get_api_key()
     if not api_key:
         raise RuntimeError("DEEPSEEK_API_KEY is not set")
+    # Effort is per-call. Anthropic's Opus 5 guidance — use low/medium liberally
+    # as the primary cost lever and reserve high for the demanding pass — applies
+    # to the judge too: mission compilation is a rewrite, the release gate is the
+    # hard judgement, so they get different defaults.
     body: dict[str, Any] = {
         "model": get_model(),
         "max_tokens": max_tokens,
         "temperature": temperature,
         "system": system,
         "messages": [{"role": "user", "content": redact(user, limit=180000)}],
-        "output_config": {"effort": os.getenv("OUTCOME_FUSION_EFFORT", "high")},
+        "output_config": {"effort": effort or os.getenv("OUTCOME_FUSION_EFFORT", "high")},
     }
     if json_mode:
         body["messages"][0]["content"] += "\n\nReturn valid JSON only."
@@ -563,6 +718,7 @@ def call_deepseek_json(
     temperature: float = 0.1,
     timeout: int = 120,
     require_keys: list[str] | None = None,
+    effort: str | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Call DeepSeek expecting JSON, and retry once if the reply does not parse.
 
@@ -580,7 +736,7 @@ def call_deepseek_json(
     raw = ""
     data: dict[str, Any] = {}
     for attempt in range(attempts):
-        raw = call_deepseek(system, prompt, max_tokens=max_tokens, temperature=temperature, json_mode=True, timeout=timeout)
+        raw = call_deepseek(system, prompt, max_tokens=max_tokens, temperature=temperature, json_mode=True, timeout=timeout, effort=effort)
         data = parse_json_loose(raw)
         if data and all(k in data for k in require_keys):
             return data, raw
@@ -710,10 +866,11 @@ def aggregate_reviews(reviews: list[dict[str, Any]]) -> dict[str, Any]:
     return merged
 
 
-def git_status_and_diff(cwd: Path) -> tuple[str, str, str]:
+def git_status_and_diff(cwd: Path, diff_limit: int | None = None) -> tuple[str, str, str]:
     status = run_cmd("git status --short", cwd, timeout=15, limit=20000)
     diff_cmd = "git diff -- . ':(exclude).git' ':(exclude)node_modules' ':(exclude).next' ':(exclude)dist' ':(exclude)build' ':(exclude).ai/outcome_fusion/tool_log.md'"
-    diff = run_cmd(diff_cmd, cwd, timeout=30, limit=100000)
+    limit = diff_limit if diff_limit is not None else env_int("OUTCOME_FUSION_MAX_DIFF_CHARS", 40000)
+    diff = run_cmd(diff_cmd, cwd, timeout=30, limit=limit)
     return status, diff, sha(status + diff)
 
 

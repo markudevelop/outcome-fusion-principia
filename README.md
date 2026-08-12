@@ -23,6 +23,12 @@ your prompt ─▶ [DeepSeek mission compiler] ─▶ Claude works ─▶ [DeepS
                   shown in your terminal          proof ledger      PASS / FAIL / BLOCKED
 ```
 
+0. **Intent router** (`UserPromptSubmit`, local, free) — a question is a question.
+   Prompts that ask rather than instruct get an answer-only instruction, **no
+   mission and no release gate for that turn**; only build prompts get the full
+   apparatus. Calibrated against 474 real prompts (14.1% land in question mode)
+   and biased toward build, so a misread never causes unrequested implementation.
+   See [`docs/OPUS5_TUNING.md`](plugins/outcome-fusion-principia/docs/OPUS5_TUNING.md).
 1. **Mission compiler** (`UserPromptSubmit`) — your prompt is rewritten by
    DeepSeek into a precise, testable mission: objective, constraints,
    hypotheses, a verification plan, and release criteria. The rewrite is printed
@@ -86,9 +92,16 @@ The key also resolves from `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` against
 | `OUTCOME_FUSION_AUTOCONTINUE` | `1` | On a FAIL, force Claude to keep working in the same turn (Stop-hook `decision: block`) instead of waiting for a re-prompt. Set `0` for non-blocking guidance only |
 | `OUTCOME_FUSION_JSON_RETRIES` | `1` | Re-asks the judge once if its JSON does not parse |
 | `OUTCOME_FUSION_MAX_CONTINUES` | `5` | Max forced auto-continuations before it stops and asks for manual review |
-| `OUTCOME_FUSION_EFFORT` | `high` | Reasoning effort sent to the model |
+| `OUTCOME_FUSION_EFFORT` | `high` | Reasoning effort for the release gate |
+| `OUTCOME_FUSION_INTENT_ROUTER` | `1` | Route questions away from the mission compiler and the gate. `0` = pre-0.7.0 behaviour (every prompt is a build) |
+| `OUTCOME_FUSION_COMPILE_EFFORT` | `medium` | Reasoning effort for mission compilation only |
+| `OUTCOME_FUSION_MAX_DIFF_CHARS` | `40000` | Git diff sent to the gate (was 100000 before 0.7.0) |
+| `OUTCOME_FUSION_MAX_TRANSCRIPT_CHARS` | `20000` | Transcript tail sent to the gate (was 50000) |
+| `OUTCOME_FUSION_MAX_PROOF_CHARS` | `30000` | Proof ledger tail sent to the gate (was 50000) |
+| `OUTCOME_FUSION_MAX_TOOLLOG_CHARS` | `12000` | Tool log tail sent to the gate (was 50000) |
 
 Add `nofusion` anywhere in a prompt to skip the compiler for that turn.
+Prefix a prompt with `build:` to force mission mode, or `q:` to force question mode.
 
 ---
 

@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.7.0 — tuned for Claude Opus 5
+
+Driven by Anthropic's [Prompting Claude Opus 5](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5)
+guide and productcompass.pm's "How to Heal Claude Opus 5". They conflict on
+verification; the resolution and the measurements are in
+[`docs/OPUS5_TUNING.md`](plugins/outcome-fusion-principia/docs/OPUS5_TUNING.md).
+
+### Added
+- **Intent router — a question is a question.** `classify_intent()` splits every
+  prompt locally into `build` or `question`. A question gets an answer-only
+  instruction, **no compiled mission, and no release gate for that turn**;
+  previously *every* prompt — including "what does this do?" — produced a full
+  release mission and a 3-vote gate that could force Claude to keep working.
+  Calibrated by replaying **474 real prompts** and hand-auditing every question
+  classification: bare `do X` is an order but `do you/we ...` is a question,
+  want/directive phrases (`i need this on the website`) are orders, and defect
+  vocabulary (`we had an issue with the publisher?`) is an order. Final split
+  14.1% question / 85.9% build. Biased toward `build` by design. Disable with
+  `OUTCOME_FUSION_INTENT_ROUTER=0`; force per-prompt with a `build:` / `q:` prefix.
+- **Opus 5 operating block** injected on every turn: scope discipline,
+  done-means-done, act-don't-ask, narration cadence, correction narration,
+  deliverable length, and a subagent delegation cap.
+- **`# Scope lock`** section in the compiled mission naming what is out of scope.
+- `docs/OPUS5_TUNING.md`, and 65 new tests (`tests/test_opus5_tuning.py`).
+
+### Changed
+- **Removed the self-recheck instructions Anthropic says to remove.** Injected
+  rule 8 ("before final answer, run the internal closure question...") is gone;
+  the mission template's "Verification plan" is now "Evidence that counts" and
+  explicitly forbids asking for a separate final verification pass or a
+  verification subagent. The closure audit still runs — in the gate, out of band.
+  A test fails the build if such an instruction reappears anywhere the plugin
+  injects. Out-of-band verification (a different model judging after the fact) is
+  kept in full; only "Claude, check yourself again" was removed.
+- **Agent descriptions narrowed** so they stop auto-triggering on routine work.
+  `verification-scientist` now says explicitly not to invoke it to double-check
+  your own work.
+- **Gate doctrine no longer expands scope**: unrequested improvements are
+  `non_blocking_followups` and must never cause a FAIL, and the gate may not FAIL
+  for the absence of a separate verification pass.
+- **Gate payload budget**, all env-tunable: diff 100k→40k, transcript 50k→20k,
+  proof 50k→30k, tool log 50k→12k chars. Measured across 181 real sessions the
+  proof+tool_log payload is **54.4% smaller**; the gate ran 2.73 calls per
+  compiled turn, so every byte was paid for ~3×.
+- **Per-call effort.** Mission compilation drops to `medium`
+  (`OUTCOME_FUSION_COMPILE_EFFORT`); the gate stays `high`.
+
+### Removed
+- Dead read of `memory.md` in the release gate — it was loaded on every gate call
+  and never sent to the judge.
+
+### Measured
+On this project's own telemetry (2,703 DeepSeek calls / 51.9M input tokens across
+184 sessions), the intent router alone removes **381 calls (14.1%) and 7.3M input
+tokens**. The payload caps are a cost change with an unmeasured quality effect —
+`eval/ab_voting.py` is the harness to test it.
+
 ## 0.6.0
 
 ### Changed

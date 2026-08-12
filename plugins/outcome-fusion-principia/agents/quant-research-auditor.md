@@ -1,6 +1,6 @@
 ---
 name: quant-research-auditor
-description: Audits trading and quant claims for data leakage, overfit, costs, regime dependence, capacity, and live execution risk.
+description: Audits trading and quant claims for data leakage, overfit, costs, regime dependence, capacity, and live execution risk. Use when a strategy result is about to be trusted, deployed, or reported; not as a routine second opinion on your own analysis.
 tools: Read, Grep, Glob, Bash
 maxTurns: 20
 ---

@@ -4,9 +4,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from common import (
+    INTENT_QUESTION,
     aggregate_reviews,
     append_memory,
     call_deepseek_json,
+    read_turn_mode,
     contains_lazy_impossible,
     continue_decision,
     cwd_from_hook,
@@ -44,7 +46,9 @@ Doctrine:
 6. Release ready beats chat ready.
 7. If the same failed path repeats, require a different strategy.
 8. Completion closure: before PASS, run the exact audit the user would trigger by asking “is there anything else?” If that audit would reveal release critical missed work, verdict must be FAIL now. Do not save missed work for later.
-9. Universal scope: the task may be engineering, research, writing, analysis, factual question answering, planning, or decision support. Apply the SAME standard with task-appropriate evidence. For code: build, tests, runs, inspection. For research or factual claims: sources, citations, calculations, cross-checks, and self-consistency. For writing or analysis: does it actually meet the stated requirement, is it accurate, is it complete. NEVER demand code, tests, or a git diff for a task that is not about code; judge it on the evidence that fits its kind. An unsupported factual claim, a missing citation, or an unmet requirement is just as much a FAIL as untested code.
+9. Scope discipline: judge against the mission's scope, not against an ideal version of the project. Work the user never asked for is NOT a release blocker — it goes in non_blocking_followups. FAIL for missing, unproven, or broken parts of the requested scope; never to expand it. If the user asked a question rather than for a change, an accurate answer IS the deliverable and unbuilt code is not a miss.
+10. Do not FAIL for the absence of a separate verification pass or a verification subagent. You are that verification pass. Judge the evidence that exists, not the ritual around it.
+11. Universal scope: the task may be engineering, research, writing, analysis, factual question answering, planning, or decision support. Apply the SAME standard with task-appropriate evidence. For code: build, tests, runs, inspection. For research or factual claims: sources, citations, calculations, cross-checks, and self-consistency. For writing or analysis: does it actually meet the stated requirement, is it accurate, is it complete. NEVER demand code, tests, or a git diff for a task that is not about code; judge it on the evidence that fits its kind. An unsupported factual claim, a missing citation, or an unmet requirement is just as much a FAIL as untested code.
 
 Return compact valid JSON only.
 """.strip()
@@ -108,7 +112,7 @@ Return JSON exactly with these keys:
 }
 
 Rules:
-PASS only if the mission is genuinely done or the remaining blocker is proven and specific. Before PASS, perform a final gap audit: ask internally “if the user asks is there anything else, would I reveal missed release critical work?” If yes, FAIL now and put it in next_actions.
+PASS only if the mission is genuinely done at the scope asked, or the remaining blocker is proven and specific. Before PASS, perform a final gap audit: ask internally “if the user asks is there anything else, would I reveal missed release critical work *inside the requested scope*?” If yes, FAIL now and put it in next_actions. Desirable-but-unrequested improvements go in non_blocking_followups and must not cause a FAIL.
 BLOCKED only if continuing truly requires something outside the local repo, such as missing credentials, live money movement, legal authority, external communication, or production access. Do not block for ordinary engineering choices.
 FAIL if Claude guessed, refused too early, did not verify, created complexity without need, left release risk, did not update proof, repeated the same failed fix, ignored a viable experiment, or would later discover obvious missed work when asked “anything else?”. Optional nice-to-have improvements are allowed only if clearly labeled non_blocking_followups.
 """.strip()
@@ -182,14 +186,26 @@ def main() -> int:
 
     cwd = cwd_from_hook(payload)
     wdir = workspace_dir(cwd, payload)
+
+    # Question turns are answers, not releases. Gating them forced unrequested
+    # implementation work and cost a full vote round per question.
+    if read_turn_mode(wdir) == INTENT_QUESTION:
+        return 0
+
     mission = safe_read(wdir / "mission.md", limit=50000)
     if not mission.strip():
         return 0
 
-    proof = safe_read(wdir / "proof.md", limit=50000)
-    tool_log = safe_read(wdir / "tool_log.md", limit=50000)
-    memory = safe_read(wdir / "memory.md", limit=20000)
-    transcript = recent_transcript_text(payload.get("transcript_path", ""), limit_chars=50000)
+    # Payload budget. Each vote resends this whole prompt, so the judge's input
+    # cost is (mission + transcript + diff + proof + tool_log) x votes. Tail
+    # truncation keeps the most recent — and most decision-relevant — content.
+    proof = safe_read(wdir / "proof.md", limit=env_int("OUTCOME_FUSION_MAX_PROOF_CHARS", 30000))
+    tool_log = safe_read(wdir / "tool_log.md", limit=env_int("OUTCOME_FUSION_MAX_TOOLLOG_CHARS", 12000))
+    # (memory.md is deliberately not read here: it was loaded and never sent to
+    # the judge. The lesson loop runs through compile_prompt's combined_memory.)
+    transcript = recent_transcript_text(
+        payload.get("transcript_path", ""), limit_chars=env_int("OUTCOME_FUSION_MAX_TRANSCRIPT_CHARS", 20000)
+    )
     last_message = payload.get("last_assistant_message", "") or ""
     git_status, git_diff, diff_hash = git_status_and_diff(cwd)
     signals = project_signals(cwd)

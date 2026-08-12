@@ -1,8 +1,8 @@
 {
   "name": "outcome-fusion-principia",
   "displayName": "Outcome Fusion Principia Operator",
-  "version": "0.6.0",
-  "description": "Session scoped first principles operator with resume-aware mission/proof/review files, a visible DeepSeek prompt rewrite, terminal verdicts, a working scientific release gate, and completion closure.",
+  "version": "0.7.0",
+  "description": "Session scoped first principles operator tuned for Claude Opus 5: a local question/build intent router, resume-aware mission/proof/review files, a visible DeepSeek prompt rewrite, terminal verdicts, an out-of-band scientific release gate, and completion closure.",
   "author": {
     "name": "Mark"
   },

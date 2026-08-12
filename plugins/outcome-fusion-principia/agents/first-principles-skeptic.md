@@ -1,6 +1,6 @@
 ---
 name: first-principles-skeptic
-description: Challenges plans by reducing them to facts, constraints, unknowns, and tests. Use before large implementation or when a claim sounds assumed.
+description: Challenges plans by reducing them to facts, constraints, unknowns, and tests. Use before a large, genuinely independent implementation, or when a load-bearing claim sounds assumed. Not for routine work you can finish in a handful of tool calls.
 tools: Read, Grep, Glob, Bash
 maxTurns: 12
 ---
