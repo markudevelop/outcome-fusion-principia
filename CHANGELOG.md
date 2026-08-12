@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.8.1 — tests that fail when the plugin is broken
+
+### Added
+
+- **55 in-process behavioural tests** (`tests/test_hook_behaviour.py`). The prior
+  suite mostly asserted that doctrine TEXT appears in a prompt — that catches a
+  deleted rule, but a gate that blocks every turn, allows every turn, or writes
+  the model's scratchpad into the mission would still pass. These drive each
+  hook's `main()` with a fake stdin and a stubbed judge and assert what it DOES:
+  which file it writes, whether it blocks, how it counts state. No network, no
+  subprocess. **247 → 255 tests; coverage 50% → 83%** (release_gate 27→95%,
+  compile_prompt 16→86%, capture_tool 0→95%, session_context 0→93%).
+- **`eval/mutation_check.py`** — breaks the plugin 15 ways on purpose and checks
+  the suite notices. **15/15 caught.** Each mutant reintroduces a real defect,
+  several of them bugs this plugin actually shipped.
+
+### Fixed
+
+- **Gate state collided between repos sharing a directory name.**
+  `/work/clientA/app` and `/work/clientB/app` resolved to the same state file and
+  shared `continues`, `last_diff_hash` and `same_diff_count`, so work in one
+  could push the other past its continuation cap or make its diff look
+  unchanged. The key now includes a hash of the full resolved path.
+
+### Notes on the measurement itself
+
+Two results in this work were wrong before they were right, and both are recorded
+because the correction is the point:
+
+- The first mutation run reported **8/8 and was invalid** — the harness passed a
+  relative `tests/` path that does not exist from the repo root, so pytest exited
+  4 on every run and every mutant looked caught. The harness now uses an absolute
+  path and refuses to proceed unless tests actually ran.
+- The "git through the shell" mutant **survived**, which read as a hole in the
+  suite. Measured both forms: a joined argv without quotes still works under
+  cmd.exe; the shipped bug required the single quotes. The mutant was unfaithful,
+  not the suite.
+
 ## 0.8.0 — the mission was the model's scratchpad, and nothing asked if the request was right
 
 ### Fixed
