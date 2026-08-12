@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.8.2 — the judge saw every tool call and no tool outcome
+
+### Fixed
+
+- **Tool results never reached the judge.** `recent_transcript_text()` extracted
+  only `text` and `tool_use` blocks, so the RECENT TRANSCRIPT showed what Claude
+  asked a tool to do and never what came back. Measured on a real 25.2 MB
+  transcript: **15 `tool_result` blocks in the window, 0 extracted.** A run of
+  commands therefore read as if all of them had succeeded — while doctrine rule
+  11 asks the judge to catch "3 passed, 12 skipped", tracebacks and errors that
+  exist *only* inside `tool_result`.
+  Results are now extracted, failures marked `[ERROR]`, and each block bounded to
+  800 characters keeping **head and tail** — pass/fail counts and tracebacks land
+  at the END of command output, so a head-only truncation would cut exactly the
+  part that decides the verdict. On the same transcript: 14 results present, 1
+  marked `[ERROR]`, total growth only 49k → 55k chars.
+
+  Found by reading what the coverage report said was untested: the function was
+  29/32 statements uncovered.
+
+### Tests
+
+- 8 transcript tests; **263 total**. Mutation set grown to **19, all caught**,
+  including four aimed at the new extraction (results dropped, failures unmarked,
+  one huge result swallowing the transcript, truncation dropping the tail).
+
 ## 0.8.1 — tests that fail when the plugin is broken
 
 ### Added

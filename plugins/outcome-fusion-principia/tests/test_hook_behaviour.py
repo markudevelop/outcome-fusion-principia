@@ -541,3 +541,78 @@ def test_capture_can_be_switched_off(tmp_path, monkeypatch):
     rc, _, wdir = _capture(tmp_path, monkeypatch)
     assert rc == 0
     assert not (wdir / "tool_log.md").exists()
+
+
+# ---- transcript extraction --------------------------------------------------
+#
+# Measured on a real 25MB Claude Code transcript: 15 tool_result blocks in the
+# last 180 lines, 0 extracted. The judge saw every tool CALL and no tool OUTCOME,
+# so a run of commands read as if all of them had succeeded — while the
+# evidence-quality doctrine asks it to spot "3 passed, 12 skipped" and
+# tracebacks, which live only in tool_result.
+
+def _transcript(tmp_path, *objs):
+    p = tmp_path / "t.jsonl"
+    p.write_text("\n".join(json.dumps(o) for o in objs), encoding="utf-8")
+    return str(p)
+
+
+def test_tool_results_reach_the_judge(tmp_path):
+    path = _transcript(tmp_path, {
+        "message": {"role": "user", "content": [
+            {"type": "tool_result", "content": [{"type": "text", "text": "3 passed, 12 skipped"}]}]}})
+    out = common.recent_transcript_text(path)
+    assert "3 passed, 12 skipped" in out, "tool output invisible to the judge"
+
+
+def test_failed_tool_results_are_marked(tmp_path):
+    path = _transcript(tmp_path, {
+        "message": {"role": "user", "content": [
+            {"type": "tool_result", "is_error": True, "content": "ModuleNotFoundError: core"}]}})
+    out = common.recent_transcript_text(path)
+    assert "[ERROR]" in out and "ModuleNotFoundError" in out
+
+
+def test_tool_calls_and_text_still_extracted(tmp_path):
+    path = _transcript(tmp_path,
+                       {"message": {"role": "assistant", "content": [
+                           {"type": "text", "text": "Running the suite."},
+                           {"type": "tool_use", "name": "Bash", "input": {"command": "pytest -q"}}]}})
+    out = common.recent_transcript_text(path)
+    assert "Running the suite." in out and "tool_use Bash" in out and "pytest -q" in out
+
+
+def test_one_huge_tool_result_cannot_swallow_the_transcript():
+    body = "START" + ("x" * 50000) + "FAILED 3 tests"
+    out = common._tool_result_text(body, per_block=800)
+    assert len(out) < 1000
+    assert "START" in out and "FAILED 3 tests" in out, "truncation dropped the verdict-bearing tail"
+    assert "chars omitted" in out
+
+
+def test_tool_result_text_handles_every_payload_shape():
+    assert common._tool_result_text("plain") == "plain"
+    assert common._tool_result_text([{"type": "text", "text": "listed"}]) == "listed"
+    assert common._tool_result_text(None) == ""
+    assert common._tool_result_text(42) == "42"
+    assert common._tool_result_text([{"type": "image"}]) == ""
+
+
+def test_transcript_skips_unparseable_and_empty_lines(tmp_path):
+    p = tmp_path / "t.jsonl"
+    p.write_text('{"broken\n\n' + json.dumps(
+        {"message": {"role": "assistant", "content": [{"type": "text", "text": "kept"}]}}), encoding="utf-8")
+    out = common.recent_transcript_text(str(p))
+    assert "kept" in out
+
+
+def test_transcript_redacts_credentials_before_they_leave(tmp_path):
+    path = _transcript(tmp_path, {"message": {"role": "user", "content": [
+        {"type": "tool_result", "content": 'API_KEY = "sk-abcdefghijklmnopqrst"'}]}})
+    out = common.recent_transcript_text(path)
+    assert "sk-abcdefghijklmnopqrst" not in out
+
+
+def test_missing_transcript_is_not_an_error():
+    assert common.recent_transcript_text("") == ""
+    assert common.recent_transcript_text("/no/such/file.jsonl") == ""
