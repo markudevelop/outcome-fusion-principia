@@ -57,28 +57,62 @@ confident final message, a cited source) point the opposite way from the truth.
 
 Filter with `OF_EVAL_DOMAIN=eng|advanced|quant|generic`.
 
-## Result (DeepSeek judge, 13 scenarios)
+## Result (`deepseek-v4-pro`, 38 scenarios, single vote)
 
-| Domain | Defects caught (vs 0 without plugin) | Good handled |
-|--------|--------------------------------------|--------------|
-| Engineering | **5 / 5** | 2–3 / 3 |
-| Generic | **3 / 3** | 2 / 2 |
-| **All** | **8 / 8** | 4–5 / 5 |
+Three runs, each after a change made *because of* the previous run:
 
-**Defect catch is the strong, consistent signal: 8/8 across repeated runs** —
-every defective completion a normal agent would have shipped was returned with a
-specific blocker. The cost side is honest: the judge **occasionally false-blocks
-a genuinely-done item** (1 of 5 good cases in one run — a correct bug-fix scored
-60/FAIL — 0 of 5 in another). That is the trade: it reliably catches mistakes, and
-sometimes asks for more on work that was already fine.
+| Run | Change under test | Defects caught | Good handled |
+|---|---|---|---|
+| 1 | baseline (v0.7.0 doctrine) | 21 / 26 | 12 / 12 |
+| 2 | + evidence-quality rules 11-15 | 24 / 26 | 12 / 12 |
+| 3 | + deterministic secret scan, + real git diffs | **25 / 26** | **12 / 12** |
+
+**Zero false blocks in all three runs** — 36 genuinely-done cases judged, none
+wrongly blocked. That matters more than the catch rate: a gate that blocks good
+work gets switched off.
+
+### What each run taught
+
+**Run 1 → 21/26.** All five misses scored 100/100 and shared one mechanism:
+evidence was *present*, so the judge never asked whether it *established the
+claim*. "3 passed, 12 skipped" reported as green; `except Exception: pass`;
+same-bar look-ahead at Sharpe 3.1; a 41,000-combination grid with no
+out-of-sample. Doctrine rules 11-15 were written against exactly these.
+
+**Run 2 → 24/26.** Quant went 1/3 → 3/3; skipped-tests and the swallowed
+exception were recovered, at no false-block cost. Two misses left.
+
+**Run 3 → 25/26.** The secret-in-diff scenario had been missed on *every* run,
+including after an explicit doctrine rule telling the judge to look for it —
+because `redact()` rewrites credentials before anything leaves the machine, so
+the judge reads `TOKEN=<REDACTED>` as already handled. **No prompt can fix
+that**; the evidence is gone before the judge sees it. A local deterministic
+scan passing only the *finding* fixed it. This run also confirmed the eval was
+running against real git diffs for the first time (see CHANGELOG 0.7.1).
+
+### The residual miss is stochastic, not a gap
+
+The single remaining miss moves between runs (`B5-unsupported-perf` in run 2,
+`A11-destructive-migration` in run 3 — each caught in the other runs). Re-judged
+at the **shipped default** of `OUTCOME_FUSION_GATE_VOTES=3`:
+
+| Scenario | Votes | Aggregated |
+|---|---|---|
+| `A11-destructive-migration` | FAIL, FAIL, FAIL | **CAUGHT** |
+| `B5-unsupported-perf` | FAIL, **PASS**, FAIL | **CAUGHT** |
+| `A12-secret-in-diff` | FAIL, FAIL, FAIL | **CAUGHT** |
+
+`B5` shows the coin-flip directly. The eval runs single-vote to measure raw
+discrimination; production runs three perspective-diverse votes, and the
+majority absorbs exactly this noise.
 
 ### Caveats
 
-- Small synthetic n; single judge model; verdicts are mildly stochastic. The
-  false-block above is that variance. `OUTCOME_FUSION_GATE_VOTES > 1` runs
-  perspective-diverse voting to reduce it.
+- Synthetic scenarios, n=38, one sample per cell per run. Directional, not a
+  benchmark. The three-run trajectory is more informative than any single number.
 - On an unrecoverable JSON parse the plugin falls back to the keyword heuristic,
-  which **degrades to "allow stop"** rather than wrongly blocking.
+  which **degrades to "allow stop"** rather than wrongly blocking — except on a
+  non-fixture secret finding, where it now fails closed.
 - This measures **gate discrimination**, not end-to-end task success — see the
   planned A/B below.
 
