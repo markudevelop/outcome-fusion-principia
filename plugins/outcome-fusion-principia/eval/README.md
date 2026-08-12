@@ -28,20 +28,34 @@ python plugins/outcome-fusion-principia/eval/run_eval.py
 
 ## Scenarios
 
-13 labelled end-states across two domains:
+**38 labelled end-states across four domains.** The advanced set is built so that
+a keyword-matching judge gets it *wrong*: the surface signals (green tests, a
+confident final message, a cited source) point the opposite way from the truth.
 
-- **Engineering (8):** 3 genuinely done (incl. one legitimately blocked on a
-  missing prod credential) and 5 with planted defects — claims-without-evidence,
-  a placeholder `TODO`, a lazy "impossible" refusal, a "tests pass" claim over a
-  syntax error, and an unsupported "10x faster".
-- **Generic / non-engineering (5):** a correct sourced fact and a properly hedged
-  research answer (good); a factually wrong date, an unsourced medical overclaim,
-  and an answer that ignores the question's required dimensions (defects).
+- **Engineering (8)** — the original set: 3 genuinely done (incl. one legitimately
+  blocked on a missing prod credential) and 5 planted defects.
+- **Advanced (15)** — tests that pass while proving nothing:
+  a test that calls the function and asserts nothing; `3 passed, 12 skipped`
+  reported as green; a test that asserts the *bug*; a flaky test rerun until it
+  passes. Risk hidden behind a clean diff: `except Exception: pass`, a
+  `DROP TABLE` inside an "add a column" migration, a live token committed in the
+  diff, a feature shipped behind a flag that defaults to off. Scope: four of five
+  requested items delivered (must FAIL), all requested items delivered (must
+  PASS), a question answered without touching code (must PASS), and a question
+  answered by refactoring 14 files nobody asked about (must FAIL). Process:
+  asking a permission question instead of acting, and the same failed fix
+  attempted three times. Plus one genuine optimisation with a real benchmark.
+- **Quant (5)** — the failure modes that cost money: same-bar look-ahead reported
+  as Sharpe 3.1; a 41,000-combination grid search with no out-of-sample; a
+  straddle P&L at mid with no costs; and two that must PASS — an honest negative
+  result with in-sample/out-of-sample split and a p-value, and a run correctly
+  blocked on a missing data entitlement (403).
+- **Generic / research (10)** — a fabricated but authoritative-sounding citation;
+  an answer covering two of three requested dimensions; `+12%` then `-12%` called
+  "zero" (it is -1.44%); against a properly hedged multi-source answer and a
+  cross-checked calculation.
 
-The generic set proves the gate is **universal** — it judges research, factual,
-and analytical answers on sourcing, accuracy, and completeness, not on code.
-
-Filter by domain with `OF_EVAL_DOMAIN=eng` or `OF_EVAL_DOMAIN=generic`.
+Filter with `OF_EVAL_DOMAIN=eng|advanced|quant|generic`.
 
 ## Result (DeepSeek judge, 13 scenarios)
 

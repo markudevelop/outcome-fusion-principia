@@ -120,7 +120,24 @@ def get_model() -> str:
 
 
 def get_base_url() -> str:
-    return os.getenv("DEEPSEEK_ANTHROPIC_BASE_URL", os.getenv("ANTHROPIC_BASE_URL", DEFAULT_BASE_URL)).rstrip("/")
+    """Resolve the API host, refusing to send a DeepSeek key to Anthropic.
+
+    ``ANTHROPIC_BASE_URL`` is set in plenty of normal environments (Claude Code
+    itself, gateways, proxies). Blindly falling back to it meant a user with
+    ``DEEPSEEK_API_KEY`` posted that key as ``x-api-key`` to Anthropic's host:
+    every call 401s, the gate silently degrades to the keyword heuristic for the
+    rest of time, and a credential leaves for a host it was never issued for.
+    So ANTHROPIC_BASE_URL is honoured only when the key is actually an Anthropic
+    one. ``DEEPSEEK_ANTHROPIC_BASE_URL`` remains the explicit override.
+    """
+    explicit = os.getenv("DEEPSEEK_ANTHROPIC_BASE_URL")
+    if explicit:
+        return explicit.rstrip("/")
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        anthropic_url = os.getenv("ANTHROPIC_BASE_URL")
+        if anthropic_url:
+            return anthropic_url.rstrip("/")
+    return DEFAULT_BASE_URL
 
 
 def cwd_from_hook(payload: dict[str, Any]) -> Path:
@@ -511,6 +528,47 @@ def classify_intent(prompt: str) -> str:
     return INTENT_BUILD
 
 
+def extract_section(markdown: str, heading: str) -> str:
+    """Return the body of one `# heading` section of a markdown document.
+
+    Used to pull the deliverables checklist back out of the compiled mission
+    without a markdown dependency. Matches the heading case-insensitively at any
+    level and stops at the next heading of the same or higher level.
+    """
+    if not markdown or not heading:
+        return ""
+    pattern = re.compile(
+        r"^(#{1,6})\s*" + re.escape(heading.strip()) + r"\s*$(.*?)(?=^#{1,6}\s|\Z)",
+        re.I | re.M | re.S,
+    )
+    m = pattern.search(markdown)
+    return m.group(2).strip() if m else ""
+
+
+def parse_checklist(section: str, limit: int = 25) -> list[str]:
+    """Pull the individual items out of a numbered or bulleted checklist."""
+    items: list[str] = []
+    for line in (section or "").splitlines():
+        stripped = line.strip()
+        m = re.match(r"^(?:[-*+]|\d+[.)])\s+(.*)$", stripped)
+        if not m:
+            continue
+        item = m.group(1).strip().strip("*_`")
+        if item:
+            items.append(item)
+    return items[:limit]
+
+
+def mission_deliverables(mission: str) -> list[str]:
+    """Every discrete thing the user asked for, as recorded in the mission.
+
+    "Done means done" only works if the requested items are enumerated somewhere
+    a machine can check them off. Exhortation in a prompt does not survive a long
+    session; a persisted list does.
+    """
+    return parse_checklist(extract_section(mission, "Deliverables checklist"))
+
+
 def write_turn_mode(wdir: Path, intent: str, prompt: str) -> None:
     """Record this turn's intent so the Stop hook knows whether to gate."""
     safe_write(
@@ -529,19 +587,22 @@ def read_turn_mode(wdir: Path) -> str:
         return INTENT_BUILD
 
 
-# --- Claude Opus 5 operating block -------------------------------------------
-# Sourced from Anthropic's "Prompting Claude Opus 5" guide (scope and
+# --- agent operating block ---------------------------------------------------
+# The plugin's default operating doctrine. Model agnostic on purpose: it is
+# injected on every turn regardless of which model is driving the session, and
+# nothing in it depends on a specific model or version.
+#
+# Provenance: distilled from Anthropic's "Prompting Claude Opus 5" guide (scope,
 # over-verification, narration, self-correction, deliverable length, subagent
-# spawning) plus the three CLAUDE.md blocks from productcompass.pm's
-# "How to Heal Claude Opus 5" (act don't ask / a question is a question / done
-# means done). Where the two disagree, Anthropic's guide wins: it says to REMOVE
-# explicit self-verification and re-check instructions because Opus 5 already
-# verifies itself and the instructions compound into wasted tokens. This plugin
-# keeps verification pressure only where it is out-of-band (the DeepSeek release
-# gate, a different model judging after the fact), never as a "check yourself
-# again" instruction to Claude.
-OPUS5_OPERATING_BLOCK = """
-Operating mode (tuned for Claude Opus 5):
+# spawning) and the three CLAUDE.md blocks from productcompass.pm's "How to Heal
+# Claude Opus 5" (act don't ask / a question is a question / done means done).
+# Where they disagree, the removal of self-verification instructions wins: modern
+# agent models already check their own work, so "check yourself again" compounds
+# with that behaviour and buys nothing. This plugin therefore keeps verification
+# pressure only where it is OUT OF BAND (the release gate: a different model
+# judging finished work), never as a re-check instruction aimed at the agent.
+AGENT_OPERATING_BLOCK = """
+Operating mode:
 - Scope: deliver what was asked at the scope intended. Make routine judgment calls yourself; check in only when different readings would lead to materially different work. If the request looks mistaken or a better approach exists, say so in one sentence and continue with the task as asked rather than quietly narrowing, widening, or transforming it. Stop short of actions clearly beyond what was asked.
 - Done means done: finish every requested item. If five things were asked for, deliver five, not four and a report. If one part is genuinely blocked, finish the rest and name that blocker in one specific sentence.
 - Act, don't ask: run reversible, inexpensive steps (reading, searching, drafting, testing) without asking. Ask only before actions that reach an audience, cost real money, or cannot be undone.
@@ -549,7 +610,7 @@ Operating mode (tuned for Claude Opus 5):
 - Corrections: correct an earlier statement only when the error changes the user's code, conclusions, or decisions. Otherwise fix it and move on without narrating it.
 - Written deliverables: match document length to what the task needs. No filler sections, redundant summaries, or boilerplate.
 - Delegation: use a subagent only for large, genuinely independent, parallelizable work. Do not delegate what you can finish in a handful of tool calls, and do not spawn subagents to double-check your own work.
-- Self-verification: you already check your own work, so do not add extra re-verification passes on top of it. The release gate in this plugin is a separate out-of-band judge; it is not your job to duplicate it.
+- Self-verification: you verify your work as you go, so do not stack extra re-verification passes on top of that. The release gate in this plugin is a separate out-of-band judge; it is not your job to duplicate it.
 """.strip()
 
 QUESTION_MODE_CONTEXT = """

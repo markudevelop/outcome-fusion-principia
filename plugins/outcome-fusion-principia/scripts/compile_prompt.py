@@ -6,7 +6,7 @@ import os
 from common import (
     INTENT_BUILD,
     INTENT_QUESTION,
-    OPUS5_OPERATING_BLOCK,
+    AGENT_OPERATING_BLOCK,
     QUESTION_MODE_CONTEXT,
     call_deepseek,
     classify_intent,
@@ -65,6 +65,9 @@ List:
 3. Known facts
 4. Unknowns that can be checked
 5. Parts likely not needed
+
+# Deliverables checklist
+Enumerate, as a numbered list, EVERY discrete thing the user asked for in this prompt — one line each, phrased so it can be checked off as done or not done. If the user asked for five things, there must be five lines. Do not add items the user did not ask for, and do not merge two requests into one line. This list is what "done" is measured against.
 
 # Simplification mandate
 List what should be removed, avoided, or not built unless evidence proves it is needed.
@@ -130,7 +133,7 @@ def main() -> int:
         out = {
             "hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",
-                "additionalContext": QUESTION_MODE_CONTEXT + "\n\n" + OPUS5_OPERATING_BLOCK,
+                "additionalContext": QUESTION_MODE_CONTEXT + "\n\n" + AGENT_OPERATING_BLOCK,
                 "sessionTitle": "Outcome Fusion Question Mode",
             },
             "suppressOutput": True,
@@ -189,9 +192,9 @@ PROOF LEDGER:
             max_tokens=5200,
             temperature=0.2,
             timeout=110,
-            # Compilation is a rewrite, not the hard judgement. Anthropic's Opus 5
-            # guidance: use lower effort liberally wherever quality holds and keep
-            # the expensive setting for the demanding pass (the release gate).
+            # Compilation is a rewrite, not the hard judgement: use lower effort
+            # where quality holds and keep the expensive setting for the release
+            # gate, which is the pass that actually has to be right.
             effort=os.getenv("OUTCOME_FUSION_COMPILE_EFFORT", "medium"),
         )
         log_metric(wdir, "mission_compile")
@@ -201,6 +204,11 @@ PROOF LEDGER:
 
     safe_write(wdir / "mission.md", mission)
     mirror_latest(wdir, "mission.md", mission)
+    # Keep the verbatim ask. The mission is a rewrite, and until now the release
+    # gate only ever saw the rewrite — so a compiler that drifted from the user's
+    # intent produced a gate that faithfully enforced the drift. The gate now
+    # judges against the original words as well.
+    safe_write(wdir / "request.txt", prompt.strip())
     if not (wdir / "proof.md").exists():
         safe_write(wdir / "proof.md", "# Proof ledger\n\nRecord every important claim as: claim, evidence, method, result, confidence, remaining risk.\n")
     mirror_latest(wdir, "proof.md")
@@ -226,7 +234,7 @@ Core operating rules:
 6. Final answer must use the mission's final response format.
 7. Use the session workspace files above. Do not write global `.ai/outcome_fusion/mission.md`, `proof.md`, or `review.md`.
 
-{OPUS5_OPERATING_BLOCK}
+{AGENT_OPERATING_BLOCK}
 """.strip()
 
     terminal_log = env_bool("OUTCOME_FUSION_TERMINAL_LOG", True)

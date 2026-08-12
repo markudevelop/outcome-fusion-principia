@@ -17,6 +17,7 @@ from common import (
     git_status_and_diff,
     json_stdout,
     load_state,
+    mission_deliverables,
     log_metric,
     make_state_path,
     project_signals,
@@ -54,7 +55,13 @@ Return compact valid JSON only.
 """.strip()
 
 PROMPT = """
-MISSION:
+USER REQUEST (verbatim, the ground truth for scope):
+{user_request}
+
+DELIVERABLES CHECKLIST (every discrete item the user asked for):
+{deliverables}
+
+MISSION (a compiled restatement of the request; if it disagrees with the verbatim request above, the request wins):
 {mission}
 
 CLAUDE FINAL MESSAGE:
@@ -101,6 +108,9 @@ Return JSON exactly with these keys:
   "non_obvious_paths": ["creative paths worth testing"],
   "falsification_tests": ["tests or checks that would prove/disprove the path"],
   "next_actions": ["exact next actions for Claude"],
+  "deliverables_status": [
+    {"item": "one checklist item, verbatim", "status": "done" or "partial" or "missing", "evidence": "what shows it, or the specific blocker"}
+  ],
   "closure_audit": {
     "if_user_asks_anything_else": "answer Claude should be able to give after PASS",
     "release_critical_missed_work": ["misses that must be fixed before PASS"],
@@ -114,6 +124,7 @@ Return JSON exactly with these keys:
 Rules:
 PASS only if the mission is genuinely done at the scope asked, or the remaining blocker is proven and specific. Before PASS, perform a final gap audit: ask internally “if the user asks is there anything else, would I reveal missed release critical work *inside the requested scope*?” If yes, FAIL now and put it in next_actions. Desirable-but-unrequested improvements go in non_blocking_followups and must not cause a FAIL.
 BLOCKED only if continuing truly requires something outside the local repo, such as missing credentials, live money movement, legal authority, external communication, or production access. Do not block for ordinary engineering choices.
+Done means done: return one deliverables_status entry per checklist item, using the item text verbatim. If any item is "partial" or "missing" without a specific proven blocker, the verdict is FAIL and that item goes in next_actions. Delivering four of five requested things plus a report about the fifth is a FAIL, not a PASS. If the checklist is empty, judge completeness against the verbatim user request instead.
 FAIL if Claude guessed, refused too early, did not verify, created complexity without need, left release risk, did not update proof, repeated the same failed fix, ignored a viable experiment, or would later discover obvious missed work when asked “anything else?”. Optional nice-to-have improvements are allowed only if clearly labeled non_blocking_followups.
 """.strip()
 
@@ -166,6 +177,14 @@ def terminal_review_message(review: dict, verdict: str, blocker: str) -> str:
     closure = review.get("closure_audit") or {}
     missed = compact_list(closure.get("release_critical_missed_work", []), 2) if isinstance(closure, dict) else []
     parts = [f"Outcome Fusion {verdict}. Score {score}. Blocker: {blocker or 'none'}"]
+    status = review.get("deliverables_status")
+    if isinstance(status, list) and status:
+        done = sum(1 for d in status if isinstance(d, dict) and str(d.get("status", "")).lower() == "done")
+        parts.append(f"Delivered: {done}/{len(status)} requested items")
+        open_items = [str(d.get("item", "")).strip() for d in status
+                      if isinstance(d, dict) and str(d.get("status", "")).lower() != "done"]
+        if open_items:
+            parts.append("Outstanding: " + "; ".join(x for x in open_items[:3] if x))
     if verified:
         parts.append("Verified: " + "; ".join(verified))
     if unsupported:
@@ -195,6 +214,13 @@ def main() -> int:
     mission = safe_read(wdir / "mission.md", limit=50000)
     if not mission.strip():
         return 0
+
+    user_request = safe_read(wdir / "request.txt", limit=8000).strip() or "(not recorded)"
+    deliverables = mission_deliverables(mission)
+    deliverables_text = (
+        "\n".join(f"{i}. {d}" for i, d in enumerate(deliverables, 1))
+        if deliverables else "(none enumerated - judge completeness against the verbatim request)"
+    )
 
     # Payload budget. Each vote resends this whole prompt, so the judge's input
     # cost is (mission + transcript + diff + proof + tool_log) x votes. Tail
@@ -232,6 +258,8 @@ def main() -> int:
 
     rendered = safe_format(
         PROMPT,
+        user_request=user_request,
+        deliverables=deliverables_text,
         mission=mission,
         last_message=last_message,
         transcript=transcript,
@@ -344,6 +372,9 @@ Non obvious paths:
 
 Falsification tests:
 {json.dumps(review.get('falsification_tests', []), ensure_ascii=False)}
+
+Outstanding deliverables (from the checklist):
+{json.dumps([d for d in (review.get('deliverables_status') or []) if str(d.get('status','')).lower() != 'done'], ensure_ascii=False)}
 
 Next actions:
 {json.dumps(review.get('next_actions', []), ensure_ascii=False)}

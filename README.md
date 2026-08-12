@@ -28,7 +28,7 @@ your prompt ─▶ [DeepSeek mission compiler] ─▶ Claude works ─▶ [DeepS
    mission and no release gate for that turn**; only build prompts get the full
    apparatus. Calibrated against 474 real prompts (14.1% land in question mode)
    and biased toward build, so a misread never causes unrequested implementation.
-   See [`docs/OPUS5_TUNING.md`](plugins/outcome-fusion-principia/docs/OPUS5_TUNING.md).
+   See [`docs/OPERATING_DOCTRINE.md`](plugins/outcome-fusion-principia/docs/OPERATING_DOCTRINE.md).
 1. **Mission compiler** (`UserPromptSubmit`) — your prompt is rewritten by
    DeepSeek into a precise, testable mission: objective, constraints,
    hypotheses, a verification plan, and release criteria. The rewrite is printed

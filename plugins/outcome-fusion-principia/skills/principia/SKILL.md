@@ -30,7 +30,7 @@ Rules:
 10. If the same fix fails twice, change strategy instead of repeating.
 11. Final answer must include only: done, verified, failed, uncertain, next best test. Lead with the outcome and match length to the task.
 
-## Scope and cost (Claude Opus 5)
+## Scope and cost
 
 1. Deliver the scope that was asked. If a better approach exists, say so in one sentence and continue with the task as asked rather than quietly widening it. Unrequested improvements are followups, not work.
 2. Finish every requested item. If one is blocked, complete the rest and name that blocker in one specific sentence.

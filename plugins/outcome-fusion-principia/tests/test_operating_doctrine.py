@@ -1,6 +1,9 @@
-"""Tests for the v0.7.0 Claude Opus 5 tuning.
+"""Tests for the v0.7.0 operating doctrine.
 
-Two sources drove these changes and they disagree in one place:
+These defaults are model agnostic: they are injected on every turn regardless of
+which model drives the session, and nothing in them keys off a model name.
+
+Provenance — two sources drove them, and they disagree in one place:
 
 * Anthropic, "Prompting Claude Opus 5" — Opus 5 self-verifies, expands scope,
   narrates more, and delegates more readily. It says to REMOVE explicit
@@ -10,8 +13,8 @@ Two sources drove these changes and they disagree in one place:
   "a question is a question", and "done means done" blocks.
 
 Resolution locked by these tests: the plugin keeps verification only where it is
-OUT OF BAND (the DeepSeek release gate judging after the fact) and never as a
-"check yourself again" instruction aimed at Claude.
+OUT OF BAND (the release gate: a different model judging finished work) and never
+as a "check yourself again" instruction aimed at the agent.
 """
 from __future__ import annotations
 
@@ -19,6 +22,7 @@ import importlib
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -177,7 +181,7 @@ def _claude_facing_text() -> str:
     """Everything this plugin injects into Claude's context."""
     return "\n".join([
         compile_prompt.TEMPLATE,
-        common.OPUS5_OPERATING_BLOCK,
+        common.AGENT_OPERATING_BLOCK,
         common.QUESTION_MODE_CONTEXT,
         common.default_mission("p", pathlib.Path(".")),
         (PLUGIN / "skills" / "principia" / "SKILL.md").read_text(encoding="utf-8"),
@@ -219,8 +223,8 @@ def test_gate_still_runs_the_closure_audit():
     "corrections",     # correction narration
     "delegation",      # subagent cap
 ])
-def test_operating_block_covers_each_opus5_lever(needle):
-    assert needle in common.OPUS5_OPERATING_BLOCK.lower()
+def test_operating_block_covers_each_behaviour_lever(needle):
+    assert needle in common.AGENT_OPERATING_BLOCK.lower()
 
 
 def test_question_mode_context_forbids_unrequested_implementation():
@@ -325,10 +329,178 @@ def test_build_turn_still_compiles_a_mission_and_arms_the_gate(tmp_path):
     wdir = tmp_path / ".ai" / "outcome_fusion" / "sessions" / "sid_s-build"
     assert (wdir / "mission.md").exists()
     assert json.loads((wdir / "turn_mode.json").read_text())["intent"] == "build"
-    assert "Operating mode (tuned for Claude Opus 5)" in out
+    assert "Operating mode:" in out
 
     # With no API key the gate falls back to the heuristic, which PASSes quietly.
     # Proof that it ran at all is the review it writes.
     rc, _ = _run_hook("release_gate.py", {**payload, "last_assistant_message": "Done."}, tmp_path)
     assert rc == 0
     assert (wdir / "review.md").exists(), "gate must still judge a build turn"
+
+
+# ---- done means done: mechanical deliverable tracking -----------------------
+
+MISSION_WITH_CHECKLIST = """# Mission
+Do three things.
+
+# Deliverables checklist
+1. Add the intent router
+2. Write the docs
+3. Bump the version
+
+# Simplification mandate
+Remove the dead memory read.
+"""
+
+
+def test_deliverables_are_extracted_from_the_mission():
+    assert common.mission_deliverables(MISSION_WITH_CHECKLIST) == [
+        "Add the intent router", "Write the docs", "Bump the version",
+    ]
+
+
+def test_extract_section_stops_at_the_next_heading():
+    body = common.extract_section(MISSION_WITH_CHECKLIST, "Deliverables checklist")
+    assert "Bump the version" in body
+    assert "Remove the dead memory read" not in body
+
+
+def test_extract_section_missing_heading_is_empty():
+    assert common.extract_section(MISSION_WITH_CHECKLIST, "Nonexistent") == ""
+    assert common.mission_deliverables("# Mission\nno checklist here\n") == []
+
+
+def test_parse_checklist_handles_bullets_and_numbers():
+    assert common.parse_checklist("- one\n2) two\n* three\nnot an item") == ["one", "two", "three"]
+
+
+def test_compile_template_demands_one_line_per_request():
+    low = compile_prompt.TEMPLATE.lower()
+    assert "deliverables checklist" in low
+    assert "five things" in low          # the explicit five-means-five instruction
+
+
+def test_gate_schema_and_rules_track_each_deliverable():
+    assert "deliverables_status" in release_gate.PROMPT
+    low = release_gate.PROMPT.lower()
+    assert "done means done" in low
+    assert "four of five" in low         # partial delivery is a FAIL, not a PASS
+
+
+def test_gate_sees_the_verbatim_request_not_only_the_rewrite():
+    assert "{user_request}" in release_gate.PROMPT
+    assert "the request wins" in release_gate.PROMPT
+
+
+def test_terminal_message_reports_delivered_count():
+    msg = release_gate.terminal_review_message(
+        {
+            "progress_score": 80,
+            "deliverables_status": [
+                {"item": "Add the intent router", "status": "done"},
+                {"item": "Write the docs", "status": "missing"},
+            ],
+        },
+        "FAIL", "docs not written",
+    )
+    assert "Delivered: 1/2 requested items" in msg
+    assert "Write the docs" in msg
+
+
+def test_compile_persists_the_verbatim_request(tmp_path):
+    prompt = "add an intent router and write the docs"
+    rc, _ = _run_hook("compile_prompt.py",
+                      {"cwd": str(tmp_path), "session_id": "s-req", "prompt": prompt}, tmp_path)
+    assert rc == 0
+    wdir = tmp_path / ".ai" / "outcome_fusion" / "sessions" / "sid_s-req"
+    assert (wdir / "request.txt").read_text(encoding="utf-8").strip() == prompt
+
+
+# ---- credential routing -----------------------------------------------------
+
+def test_deepseek_key_never_routes_to_anthropic_host(monkeypatch):
+    # ANTHROPIC_BASE_URL is set in ordinary environments (Claude Code, gateways).
+    # Falling back to it posted the DeepSeek key to Anthropic: a permanent 401
+    # that silently degraded the gate, and a credential sent to the wrong host.
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+    monkeypatch.delenv("DEEPSEEK_ANTHROPIC_BASE_URL", raising=False)
+    assert common.get_base_url() == common.DEFAULT_BASE_URL
+    assert "anthropic.com" not in common.get_base_url()
+
+
+def test_anthropic_base_url_still_honoured_for_an_anthropic_key(monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_ANTHROPIC_BASE_URL", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gateway.internal/v1")
+    assert common.get_base_url() == "https://gateway.internal/v1"
+
+
+def test_explicit_override_always_wins(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+    monkeypatch.setenv("DEEPSEEK_ANTHROPIC_BASE_URL", "https://proxy.local/anthropic/")
+    assert common.get_base_url() == "https://proxy.local/anthropic"
+
+
+# ---- the doctrine is model agnostic ----------------------------------------
+
+@pytest.mark.parametrize("path", [
+    "scripts/common.py", "scripts/compile_prompt.py", "scripts/release_gate.py",
+    "skills/principia/SKILL.md",
+])
+def test_no_model_name_leaks_into_injected_text(path):
+    # Provenance may be cited in comments, but nothing the agent or the judge
+    # reads may key off a specific model name or version.
+    text = (PLUGIN / path).read_text(encoding="utf-8")
+    injected = "\n".join(
+        ln for ln in text.splitlines()
+        if not ln.lstrip().startswith("#")
+    ).lower()
+    for name in ("opus 5", "opus5", "fable", "sonnet", "gpt-"):
+        assert name not in injected, f"{path} injects a model-specific string: {name}"
+
+
+# ---- the eval suite itself stays valid --------------------------------------
+
+def _load_scenarios():
+    sys.path.insert(0, str(PLUGIN / "eval"))
+    import run_eval
+    return run_eval
+
+
+def test_eval_scenarios_are_well_formed():
+    run_eval = _load_scenarios()
+    ids = [s["id"] for s in run_eval.SCENARIOS]
+    assert len(ids) == len(set(ids)), "duplicate scenario ids"
+    assert len(ids) >= 38, "scenario set shrank"
+    for s in run_eval.SCENARIOS:
+        for key in ("id", "label", "mission", "diff", "proof", "tool_log", "final"):
+            assert key in s, f"{s['id']} missing {key}"
+        assert s["label"] in ("good", "bad"), s["id"]
+
+
+def test_eval_covers_every_domain_with_both_labels():
+    run_eval = _load_scenarios()
+    seen = {}
+    for s in run_eval.SCENARIOS:
+        seen.setdefault(s.get("domain", "eng"), set()).add(s["label"])
+    for domain in ("eng", "advanced", "quant", "generic"):
+        assert seen.get(domain) == {"good", "bad"}, f"{domain} needs both good and bad cases"
+
+
+def test_eval_harness_supplies_every_gate_placeholder():
+    # A missing field would leave a literal "{user_request}" in the judge prompt
+    # and quietly invalidate the whole measurement.
+    run_eval = _load_scenarios()
+    s = next(x for x in run_eval.SCENARIOS if x["id"] == "A6-partial-delivery")
+    rendered = common.safe_format(
+        release_gate.PROMPT,
+        user_request=s["request"],
+        deliverables="\n".join(f"{i}. {d}" for i, d in enumerate(s["deliverables"], 1)),
+        mission=s["mission"], last_message=s["final"], transcript=s["final"],
+        signals="python", git_status="M f.py", diff_hash="x", git_diff=s["diff"],
+        proof=s["proof"], tool_log=s["tool_log"], loop_state="{}", lazy_impossible="False",
+    )
+    assert not re.search(r"\{(user_request|deliverables|mission|proof|tool_log|git_diff|transcript|last_message|signals|git_status|diff_hash|loop_state|lazy_impossible)\}", rendered)
+    assert "1. Add the retry decorator" in rendered

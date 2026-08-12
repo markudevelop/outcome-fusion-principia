@@ -9,6 +9,7 @@ import pytest
 import release_gate
 
 GATE_FIELDS = dict(
+    user_request="UR", deliverables="DL",
     mission="M", last_message="L", transcript="T", signals="S",
     git_status="GS", diff_hash="DH", git_diff="GD", proof="P",
     tool_log="TL", loop_state="{}", lazy_impossible="False",
@@ -28,9 +29,12 @@ def test_original_str_format_would_raise_keyerror():
 
 def test_safe_format_renders_gate_prompt_without_error():
     out = common.safe_format(release_gate.PROMPT, **GATE_FIELDS)
-    assert "MISSION:\nM" in out          # named token substituted
+    assert "scope):\nUR" in out          # named token substituted
+    assert "request wins):\nM" in out    # mission body substituted
     assert '"verdict"' in out            # JSON schema preserved intact
     assert "{mission}" not in out        # no leftover placeholders
+    assert "{user_request}" not in out
+    assert "{deliverables}" not in out
 
 
 def test_compile_template_renders():

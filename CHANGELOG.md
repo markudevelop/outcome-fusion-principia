@@ -5,7 +5,7 @@
 Driven by Anthropic's [Prompting Claude Opus 5](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5)
 guide and productcompass.pm's "How to Heal Claude Opus 5". They conflict on
 verification; the resolution and the measurements are in
-[`docs/OPUS5_TUNING.md`](plugins/outcome-fusion-principia/docs/OPUS5_TUNING.md).
+[`docs/OPERATING_DOCTRINE.md`](plugins/outcome-fusion-principia/docs/OPERATING_DOCTRINE.md).
 
 ### Added
 - **Intent router — a question is a question.** `classify_intent()` splits every
@@ -23,7 +23,7 @@ verification; the resolution and the measurements are in
   done-means-done, act-don't-ask, narration cadence, correction narration,
   deliverable length, and a subagent delegation cap.
 - **`# Scope lock`** section in the compiled mission naming what is out of scope.
-- `docs/OPUS5_TUNING.md`, and 65 new tests (`tests/test_opus5_tuning.py`).
+- `docs/OPERATING_DOCTRINE.md`, and 65 new tests (`tests/test_opus5_tuning.py`).
 
 ### Changed
 - **Removed the self-recheck instructions Anthropic says to remove.** Injected
@@ -46,6 +46,51 @@ verification; the resolution and the measurements are in
   compiled turn, so every byte was paid for ~3×.
 - **Per-call effort.** Mission compilation drops to `medium`
   (`OUTCOME_FUSION_COMPILE_EFFORT`); the gate stays `high`.
+
+- **Done means done, checked mechanically.** The compiled mission carries a
+  `# Deliverables checklist` (one line per discrete thing the user asked for) and
+  the gate returns a `deliverables_status` entry per item (`done`/`partial`/
+  `missing` + evidence or a named blocker). Any non-`done` item without a proven
+  blocker is a FAIL; the terminal line reads `Delivered: 3/5 requested items` and
+  names what is outstanding.
+- **The gate now sees the verbatim user request** (`request.txt`), not only the
+  compiled mission, with an explicit tie-break: if the mission disagrees with the
+  request, the request wins. Previously a compiler that drifted from the user's
+  intent produced a gate that faithfully enforced the drift.
+- **Eval suite expanded 13 -> 38 scenarios** across four domains (eng, advanced,
+  quant, generic), built so a keyword-matching judge gets them wrong: vacuous
+  tests, `3 passed, 12 skipped` reported as green, a test asserting the bug, a
+  flaky rerun-until-green, `except Exception: pass`, a `DROP TABLE` inside an
+  "add a column" migration, a committed live token, a feature behind an off flag,
+  same-bar look-ahead at Sharpe 3.1, a 41k-combination grid with no OOS, a
+  fabricated citation, and +12%/-12% called "zero". Plus must-PASS cases: an
+  honest negative result with IS/OOS and a p-value, a legitimately blocked run,
+  a question answered without touching code, and a real benchmark.
+
+### Fixed
+- **Credential routing (security-relevant).** `get_base_url()` fell back to
+  `ANTHROPIC_BASE_URL`, which is set in ordinary environments (Claude Code,
+  gateways, proxies) — so a user with `DEEPSEEK_API_KEY` had that key posted as
+  `x-api-key` to Anthropic's host. Every call 401s, the gate silently degrades to
+  the keyword heuristic permanently, and a credential leaves for a host it was
+  never issued for. `ANTHROPIC_BASE_URL` is now honoured only for an Anthropic
+  key. Found by running the eval, which returned 13/13 HTTP 401.
+
+### Judge model
+Measured head-to-head on the 13-scenario eval: `deepseek-v4-pro` 8/8 defects and
+5/5 good; `deepseek-v4-flash` 8/8 defects but 4/5 good — it false-blocked the
+legitimately-blocked scenario, which in this plugin triggers auto-continuation on
+a task that genuinely needs an external credential. **Pro stays the default.**
+Flash is ~3.1x cheaper and both aggregate to the correct verdict at
+`GATE_VOTES=3`, so `OUTCOME_FUSION_MODEL=deepseek-v4-flash` is a supported
+cost-first choice. n=13, single samples: directional, not conclusive.
+
+### Note on naming
+The operating block is **model agnostic**: injected on every turn whatever model
+drives the session, with no model name in anything the agent or judge reads (a
+test enforces this). `OPUS5_OPERATING_BLOCK` -> `AGENT_OPERATING_BLOCK`,
+`docs/OPUS5_TUNING.md` -> `docs/OPERATING_DOCTRINE.md`. The Opus 5 guidance is
+where the rules came from, not a restriction on where they apply.
 
 ### Removed
 - Dead read of `memory.md` in the release gate — it was loaded on every gate call

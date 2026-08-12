@@ -1,4 +1,9 @@
-# Tuning Outcome Fusion for Claude Opus 5 (v0.7.0)
+# Operating doctrine (v0.7.0)
+
+**These defaults are model agnostic.** They are injected on every turn whatever
+model is driving the session, and nothing in them keys off a model name. The
+provenance below is where the rules came from, not a restriction on where they
+apply.
 
 Two things changed under this plugin at once: Claude Opus 5 shipped, and Anthropic
 cut Claude Code's own system prompt by ~80%. Both change what a harness like this
@@ -90,9 +95,9 @@ A test (`test_no_self_recheck_instructions_are_injected`) fails the build if a
 "double-check" / "re-verify" / "final verification step" instruction reappears in
 anything the plugin injects, unless it is inside a "do not" clause.
 
-### 3. Opus 5 operating block
+### 3. Agent operating block
 
-`common.OPUS5_OPERATING_BLOCK` is injected on every turn (both modes) and covers
+`common.AGENT_OPERATING_BLOCK` is injected on every turn (both modes) and covers
 each behaviour Anthropic flags as needing tuning: scope discipline, done-means-done
 completion, act-don't-ask, narration cadence, correction narration, written
 deliverable length, subagent delegation caps, and no stacked self-verification.
@@ -127,6 +132,36 @@ every byte in its prompt is paid for roughly three times.
 
 Every cap is an env var; set them back to the old values to revert.
 
+### 6. Done means done, checked mechanically
+
+Exhortation does not survive a long session. The compiled mission now carries a
+`# Deliverables checklist` — one line per discrete thing the user asked for — and
+the gate returns a `deliverables_status` entry per item (`done` / `partial` /
+`missing`, with evidence or a named blocker). Any item that is not `done` without
+a proven blocker is a FAIL, and the terminal line reads `Delivered: 3/5 requested
+items` with the outstanding ones named. "Four of five plus a report about the
+fifth" is now mechanically a FAIL rather than a matter of the judge's mood.
+
+### 7. The gate sees the verbatim request
+
+Until 0.7.0 the gate only ever saw the *compiled mission* — a model's rewrite of
+the request. A compiler that drifted from the user's intent produced a gate that
+faithfully enforced the drift, and nothing in the loop could notice. The raw
+prompt is now persisted to `request.txt` and shown to the judge first, with an
+explicit tie-break: **if the mission disagrees with the verbatim request, the
+request wins.**
+
+### 8. Credential routing fix (security-relevant)
+
+`get_base_url()` used to fall back to `ANTHROPIC_BASE_URL`. That variable is set
+in plenty of ordinary environments — Claude Code itself, gateways, proxies — so a
+user with `DEEPSEEK_API_KEY` had that key posted as `x-api-key` to Anthropic's
+host. Two consequences: every call 401s and the gate silently degrades to the
+keyword heuristic *for the rest of time*, and a credential leaves for a host it
+was never issued for. `ANTHROPIC_BASE_URL` is now honoured only when the key is
+actually an Anthropic key; `DEEPSEEK_ANTHROPIC_BASE_URL` remains the explicit
+override. This was found by running the eval, which returned 13/13 HTTP 401.
+
 ## Environment variables added in 0.7.0
 
 | Variable | Default | Purpose |
@@ -137,6 +172,31 @@ Every cap is an env var; set them back to the old values to revert.
 | `OUTCOME_FUSION_MAX_TRANSCRIPT_CHARS` | `20000` | Transcript tail sent to the gate (was 50000) |
 | `OUTCOME_FUSION_MAX_PROOF_CHARS` | `30000` | Proof ledger tail sent to the gate (was 50000) |
 | `OUTCOME_FUSION_MAX_TOOLLOG_CHARS` | `12000` | Tool log tail sent to the gate (was 50000) |
+
+## Judge model choice
+
+`OUTCOME_FUSION_MODEL` selects the judge. Measured head-to-head on the 13-scenario
+eval, one sample each:
+
+| Judge | Defects caught | Good handled | Input $/1M |
+|---|---|---|---|
+| `deepseek-v4-pro` (default) | 8/8 | **5/5** | $0.435 |
+| `deepseek-v4-flash` | 8/8 | **4/5** | $0.14 |
+
+Flash matches pro on catching defects and is ~3.1x cheaper, but it false-blocked
+the legitimately-blocked scenario (returned FAIL where the correct verdict is
+BLOCKED) and produced one unparseable verdict in a follow-up run. In this plugin
+a FAIL triggers auto-continuation, so that specific error makes the agent hammer
+at a task that genuinely needs an external credential. **Pro stays the default.**
+
+At `GATE_VOTES=3` both models aggregated to the correct BLOCKED on that scenario,
+so flash is a reasonable choice if cost dominates:
+
+```bash
+export OUTCOME_FUSION_MODEL=deepseek-v4-flash   # ~3.1x cheaper, keep GATE_VOTES>=3
+```
+
+n=13 with single samples: directional, not conclusive.
 
 ## Known limits
 
