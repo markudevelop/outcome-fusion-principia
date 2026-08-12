@@ -4,9 +4,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from common import (
+    INTENT_QUESTION,
     aggregate_reviews,
     append_memory,
     call_deepseek_json,
+    read_turn_mode,
     contains_lazy_impossible,
     continue_decision,
     cwd_from_hook,
@@ -15,6 +17,7 @@ from common import (
     git_status_and_diff,
     json_stdout,
     load_state,
+    mission_deliverables,
     log_metric,
     make_state_path,
     project_signals,
@@ -44,13 +47,24 @@ Doctrine:
 6. Release ready beats chat ready.
 7. If the same failed path repeats, require a different strategy.
 8. Completion closure: before PASS, run the exact audit the user would trigger by asking “is there anything else?” If that audit would reveal release critical missed work, verdict must be FAIL now. Do not save missed work for later.
-9. Universal scope: the task may be engineering, research, writing, analysis, factual question answering, planning, or decision support. Apply the SAME standard with task-appropriate evidence. For code: build, tests, runs, inspection. For research or factual claims: sources, citations, calculations, cross-checks, and self-consistency. For writing or analysis: does it actually meet the stated requirement, is it accurate, is it complete. NEVER demand code, tests, or a git diff for a task that is not about code; judge it on the evidence that fits its kind. An unsupported factual claim, a missing citation, or an unmet requirement is just as much a FAIL as untested code.
+9. Scope discipline: judge against the mission's scope, not against an ideal version of the project. Work the user never asked for is NOT a release blocker — it goes in non_blocking_followups. FAIL for missing, unproven, or broken parts of the requested scope; never to expand it. If the user asked a question rather than for a change, an accurate answer IS the deliverable and unbuilt code is not a miss.
+10. Do not FAIL for the absence of a separate verification pass or a verification subagent. You are that verification pass. Judge the evidence that exists, not the ritual around it.
+12. Evidence QUALITY, not evidence presence. The presence of a test run, a benchmark, or a citation proves nothing by itself; read what it actually establishes. Green is not proven when: tests were skipped, xfailed, or deselected (a "3 passed, 12 skipped" run does not cover the skipped 12); the test asserts nothing, asserts the buggy behaviour, or hardcodes the expected value; it only passed after reruns or a flaky/retry decorator; the code path is behind a flag that defaults to off; or an exception is swallowed so the failure can no longer surface. Count what was NOT covered, not only what passed.
+13. Read the diff for danger independently of the claim, even when every stated goal was met. Treat as release blocking: a credential, token, or key literal added to the code; a destructive or irreversible data operation that was not what was asked for; broad exception swallowing (`except Exception: pass`, empty catch, `|| true`) that converts a failure into silence; and removal of a check, assertion, or test to make something pass. A clean final message and a green suite do not excuse any of these.
+14. Method defects in quantitative and empirical claims. A performance, edge, or accuracy number is unsupported — not merely uncertain — when the method that produced it is broken. Look for: look-ahead or same-bar leakage (a signal computed from data at time t applied to the return at time t); no out-of-sample or walk-forward split, or parameters chosen by ranking a large grid on the whole history; costs, fees, slippage, borrow, or capacity omitted; survivorship or selection bias in the sample; a result reported without n, dispersion, or a significance measure; and a settlement or price proxy standing in for the real observable. An implausibly high headline number with none of these addressed is a FAIL, not a PASS.
+15. Universal scope: the task may be engineering, research, writing, analysis, factual question answering, planning, or decision support. Apply the SAME standard with task-appropriate evidence. For code: build, tests, runs, inspection. For research or factual claims: sources, citations, calculations, cross-checks, and self-consistency. For writing or analysis: does it actually meet the stated requirement, is it accurate, is it complete. NEVER demand code, tests, or a git diff for a task that is not about code; judge it on the evidence that fits its kind. An unsupported factual claim, a missing citation, or an unmet requirement is just as much a FAIL as untested code.
 
 Return compact valid JSON only.
 """.strip()
 
 PROMPT = """
-MISSION:
+USER REQUEST (verbatim, the ground truth for scope):
+{user_request}
+
+DELIVERABLES CHECKLIST (every discrete item the user asked for):
+{deliverables}
+
+MISSION (a compiled restatement of the request; if it disagrees with the verbatim request above, the request wins):
 {mission}
 
 CLAUDE FINAL MESSAGE:
@@ -97,6 +111,9 @@ Return JSON exactly with these keys:
   "non_obvious_paths": ["creative paths worth testing"],
   "falsification_tests": ["tests or checks that would prove/disprove the path"],
   "next_actions": ["exact next actions for Claude"],
+  "deliverables_status": [
+    {"item": "one checklist item, verbatim", "status": "done" or "partial" or "missing", "evidence": "what shows it, or the specific blocker"}
+  ],
   "closure_audit": {
     "if_user_asks_anything_else": "answer Claude should be able to give after PASS",
     "release_critical_missed_work": ["misses that must be fixed before PASS"],
@@ -108,8 +125,9 @@ Return JSON exactly with these keys:
 }
 
 Rules:
-PASS only if the mission is genuinely done or the remaining blocker is proven and specific. Before PASS, perform a final gap audit: ask internally “if the user asks is there anything else, would I reveal missed release critical work?” If yes, FAIL now and put it in next_actions.
+PASS only if the mission is genuinely done at the scope asked, or the remaining blocker is proven and specific. Before PASS, perform a final gap audit: ask internally “if the user asks is there anything else, would I reveal missed release critical work *inside the requested scope*?” If yes, FAIL now and put it in next_actions. Desirable-but-unrequested improvements go in non_blocking_followups and must not cause a FAIL.
 BLOCKED only if continuing truly requires something outside the local repo, such as missing credentials, live money movement, legal authority, external communication, or production access. Do not block for ordinary engineering choices.
+Done means done: return one deliverables_status entry per checklist item, using the item text verbatim. If any item is "partial" or "missing" without a specific proven blocker, the verdict is FAIL and that item goes in next_actions. Delivering four of five requested things plus a report about the fifth is a FAIL, not a PASS. If the checklist is empty, judge completeness against the verbatim user request instead.
 FAIL if Claude guessed, refused too early, did not verify, created complexity without need, left release risk, did not update proof, repeated the same failed fix, ignored a viable experiment, or would later discover obvious missed work when asked “anything else?”. Optional nice-to-have improvements are allowed only if clearly labeled non_blocking_followups.
 """.strip()
 
@@ -162,6 +180,14 @@ def terminal_review_message(review: dict, verdict: str, blocker: str) -> str:
     closure = review.get("closure_audit") or {}
     missed = compact_list(closure.get("release_critical_missed_work", []), 2) if isinstance(closure, dict) else []
     parts = [f"Outcome Fusion {verdict}. Score {score}. Blocker: {blocker or 'none'}"]
+    status = review.get("deliverables_status")
+    if isinstance(status, list) and status:
+        done = sum(1 for d in status if isinstance(d, dict) and str(d.get("status", "")).lower() == "done")
+        parts.append(f"Delivered: {done}/{len(status)} requested items")
+        open_items = [str(d.get("item", "")).strip() for d in status
+                      if isinstance(d, dict) and str(d.get("status", "")).lower() != "done"]
+        if open_items:
+            parts.append("Outstanding: " + "; ".join(x for x in open_items[:3] if x))
     if verified:
         parts.append("Verified: " + "; ".join(verified))
     if unsupported:
@@ -182,14 +208,33 @@ def main() -> int:
 
     cwd = cwd_from_hook(payload)
     wdir = workspace_dir(cwd, payload)
+
+    # Question turns are answers, not releases. Gating them forced unrequested
+    # implementation work and cost a full vote round per question.
+    if read_turn_mode(wdir) == INTENT_QUESTION:
+        return 0
+
     mission = safe_read(wdir / "mission.md", limit=50000)
     if not mission.strip():
         return 0
 
-    proof = safe_read(wdir / "proof.md", limit=50000)
-    tool_log = safe_read(wdir / "tool_log.md", limit=50000)
-    memory = safe_read(wdir / "memory.md", limit=20000)
-    transcript = recent_transcript_text(payload.get("transcript_path", ""), limit_chars=50000)
+    user_request = safe_read(wdir / "request.txt", limit=8000).strip() or "(not recorded)"
+    deliverables = mission_deliverables(mission)
+    deliverables_text = (
+        "\n".join(f"{i}. {d}" for i, d in enumerate(deliverables, 1))
+        if deliverables else "(none enumerated - judge completeness against the verbatim request)"
+    )
+
+    # Payload budget. Each vote resends this whole prompt, so the judge's input
+    # cost is (mission + transcript + diff + proof + tool_log) x votes. Tail
+    # truncation keeps the most recent — and most decision-relevant — content.
+    proof = safe_read(wdir / "proof.md", limit=env_int("OUTCOME_FUSION_MAX_PROOF_CHARS", 30000))
+    tool_log = safe_read(wdir / "tool_log.md", limit=env_int("OUTCOME_FUSION_MAX_TOOLLOG_CHARS", 12000))
+    # (memory.md is deliberately not read here: it was loaded and never sent to
+    # the judge. The lesson loop runs through compile_prompt's combined_memory.)
+    transcript = recent_transcript_text(
+        payload.get("transcript_path", ""), limit_chars=env_int("OUTCOME_FUSION_MAX_TRANSCRIPT_CHARS", 20000)
+    )
     last_message = payload.get("last_assistant_message", "") or ""
     git_status, git_diff, diff_hash = git_status_and_diff(cwd)
     signals = project_signals(cwd)
@@ -216,6 +261,8 @@ def main() -> int:
 
     rendered = safe_format(
         PROMPT,
+        user_request=user_request,
+        deliverables=deliverables_text,
         mission=mission,
         last_message=last_message,
         transcript=transcript,
@@ -328,6 +375,9 @@ Non obvious paths:
 
 Falsification tests:
 {json.dumps(review.get('falsification_tests', []), ensure_ascii=False)}
+
+Outstanding deliverables (from the checklist):
+{json.dumps([d for d in (review.get('deliverables_status') or []) if str(d.get('status','')).lower() != 'done'], ensure_ascii=False)}
 
 Next actions:
 {json.dumps(review.get('next_actions', []), ensure_ascii=False)}

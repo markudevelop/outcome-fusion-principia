@@ -1,6 +1,6 @@
 ---
 name: evidence-auditor
-description: Audits any factual, research, writing, or analytical claim for sourcing, citation quality, logical consistency, completeness, and hidden assumptions. Use for non-code work where the evidence is sources and reasoning, not tests.
+description: Audits any factual, research, writing, or analytical claim for sourcing, citation quality, logical consistency, completeness, and hidden assumptions. Use for non-code work where the evidence is sources and reasoning, not tests, and where the claim is load-bearing enough to justify an independent pass.
 tools: Read, Grep, Glob, WebSearch, WebFetch
 maxTurns: 20
 ---

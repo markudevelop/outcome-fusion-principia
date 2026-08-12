@@ -26,3 +26,16 @@ Default experiment list:
 6. Turnover and capacity check.
 7. Alternative data source check.
 8. Simpler baseline comparison.
+
+## When to escalate
+
+This is fast triage. Two deeper skills ship alongside it:
+
+- **`bucket-brute-force`** — use to *find* an edge. Do not tune one rule until it
+  looks good; sweep the full honest event set by many decision-time-knowable
+  dimensions and keep only buckets that pay in both halves of history.
+- **`quant-aggregation-integrity`** — use to *verify* a number before trusting it.
+  Audit from the lowest available unit (trade, leg, timestamp, path) and aggregate
+  only after every nonlinear transformation and cost is applied.
+
+Reach for them before accepting any backtest headline.

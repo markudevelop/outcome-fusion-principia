@@ -11,6 +11,8 @@ CHECK_HINTS = re.compile(r"\b(test|pytest|vitest|jest|playwright|cypress|lint|ty
 
 def main() -> int:
     payload = read_stdin_json()
+    if not env_bool("OUTCOME_FUSION_ENABLED", True):
+        return 0
     if not env_bool("OUTCOME_FUSION_CAPTURE_ENABLED", True):
         return 0
     cwd = cwd_from_hook(payload)

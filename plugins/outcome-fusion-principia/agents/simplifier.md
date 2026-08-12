@@ -1,6 +1,6 @@
 ---
 name: simplifier
-description: Removes unnecessary code, architecture, assumptions, steps, dependencies, and surface area before adding more.
+description: Removes unnecessary code, architecture, assumptions, steps, dependencies, and surface area before adding more. Use for a wide multi-file simplification sweep; for a local cleanup, just do it inline.
 tools: Read, Grep, Glob, Bash
 maxTurns: 12
 ---

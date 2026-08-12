@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import time
-from common import cwd_from_hook, mirror_latest, read_stdin_json, safe_append, workspace_dir, redact
+from common import cwd_from_hook, env_bool, mirror_latest, read_stdin_json, safe_append, workspace_dir, redact
 
 
 def main() -> int:
     payload = read_stdin_json()
+    if not env_bool("OUTCOME_FUSION_ENABLED", True):
+        return 0
     cwd = cwd_from_hook(payload)
     wdir = workspace_dir(cwd, payload)
     err = payload.get("error") or "unknown"

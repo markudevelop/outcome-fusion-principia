@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
+
 from common import (
+    INTENT_BUILD,
+    INTENT_QUESTION,
+    AGENT_OPERATING_BLOCK,
+    QUESTION_MODE_CONTEXT,
     call_deepseek,
+    classify_intent,
     cwd_from_hook,
     default_mission,
     env_bool,
@@ -18,6 +25,7 @@ from common import (
     should_skip_prompt,
     session_paths_block,
     workspace_dir,
+    write_turn_mode,
 )
 
 SYSTEM = """
@@ -58,6 +66,9 @@ List:
 4. Unknowns that can be checked
 5. Parts likely not needed
 
+# Deliverables checklist
+Enumerate, as a numbered list, EVERY discrete thing the user asked for in this prompt — one line each, phrased so it can be checked off as done or not done. If the user asked for five things, there must be five lines. Do not add items the user did not ask for, and do not merge two requests into one line. This list is what "done" is measured against.
+
 # Simplification mandate
 List what should be removed, avoided, or not built unless evidence proves it is needed.
 
@@ -73,17 +84,20 @@ State the rule: impossible, cannot, not realistic, no edge, or won't work is not
 # Hypothesis map
 List 4 to 8 paths. Include obvious paths and at least two non obvious paths. Each path must include what would prove it right or wrong.
 
-# Verification plan
-List exact checks Claude should run or inspect. Include build, tests, lint, logs, docs, repo search, calculations, or backtests where relevant.
+# Evidence that counts
+List which specific checks or sources would actually settle this task: build, tests, lint, logs, docs, repo search, calculations, backtests, citations. Name the evidence, not a ritual. Do not ask for a separate final verification pass or a subagent to double-check; Claude verifies its own work as it goes.
 
 # Proof ledger requirements
 Tell Claude to update the session proof ledger path supplied in the injected context with claim, evidence, method, result, confidence, and remaining risk. Do not use a global proof file.
 
 # Release criteria
-Concrete criteria for being done. No fake implementation. No placeholder TODO. No broken imports. No silent failures. Main flow works. Claims are verified or marked uncertain. Before saying done, perform a final "anything else?" audit. If that audit would reveal release critical missed work, fix it before final response. Separate optional future ideas from release blockers.
+Concrete criteria for being done. No fake implementation. No placeholder TODO. No broken imports. No silent failures. Main flow works. Claims are verified or marked uncertain. Every item the user asked for is delivered, not most of them plus a report. Separate optional future ideas from release blockers.
+
+# Scope lock
+State the exact boundary of this task: what is in scope, and the nearest adjacent work that is explicitly NOT in scope for this request. Deliver the asked scope; do not narrow, widen, or transform it.
 
 # Final response format
-Only include: done, verified, failed, uncertain, optional non-blocking followups.
+Only include: done, verified, failed, uncertain, optional non-blocking followups. Lead with the outcome. Match length to the task; no filler sections or restated boilerplate.
 """.strip()
 
 
@@ -107,6 +121,30 @@ def main() -> int:
 
     cwd = cwd_from_hook(payload)
     wdir = workspace_dir(cwd, payload)
+
+    # Route on intent before spending anything. A question gets an answer-only
+    # instruction and no mission, which also switches the Stop gate off for this
+    # turn (release_gate reads turn_mode.json).
+    # "anything else?" is phrased as a question but its answer may resume work,
+    # so closure turns stay in build mode and keep the gate on.
+    intent = INTENT_BUILD if is_anything_else_query(prompt) else classify_intent(prompt)
+    write_turn_mode(wdir, intent, prompt)
+    if intent == INTENT_QUESTION:
+        out = {
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": QUESTION_MODE_CONTEXT + "\n\n" + AGENT_OPERATING_BLOCK,
+                "sessionTitle": "Outcome Fusion Question Mode",
+            },
+            "suppressOutput": True,
+        }
+        if env_bool("OUTCOME_FUSION_TERMINAL_LOG", True):
+            out["systemMessage"] = (
+                "Outcome Fusion: question mode (answer only, no mission, gate off for this turn). "
+                "Prefix with `build:` to force mission mode."
+            )
+        json_stdout(out)
+        return 0
 
     if is_anything_else_query(prompt):
         closure = safe_read(wdir / "closure.md", limit=30000)
@@ -154,6 +192,10 @@ PROOF LEDGER:
             max_tokens=5200,
             temperature=0.2,
             timeout=110,
+            # Compilation is a rewrite, not the hard judgement: use lower effort
+            # where quality holds and keep the expensive setting for the release
+            # gate, which is the pass that actually has to be right.
+            effort=os.getenv("OUTCOME_FUSION_COMPILE_EFFORT", "medium"),
         )
         log_metric(wdir, "mission_compile")
     except Exception as e:
@@ -162,10 +204,20 @@ PROOF LEDGER:
 
     safe_write(wdir / "mission.md", mission)
     mirror_latest(wdir, "mission.md", mission)
+    # Keep the verbatim ask. The mission is a rewrite, and until now the release
+    # gate only ever saw the rewrite — so a compiler that drifted from the user's
+    # intent produced a gate that faithfully enforced the drift. The gate now
+    # judges against the original words as well.
+    safe_write(wdir / "request.txt", prompt.strip())
     if not (wdir / "proof.md").exists():
         safe_write(wdir / "proof.md", "# Proof ledger\n\nRecord every important claim as: claim, evidence, method, result, confidence, remaining risk.\n")
     mirror_latest(wdir, "proof.md")
 
+    # Rule 8 of earlier versions ("before final answer, run the internal closure
+    # question...") was removed on purpose. Anthropic's Opus 5 guide says explicit
+    # re-check and final-verification instructions compound with the model's own
+    # self-verification and cost tokens with no quality gain; the closure audit
+    # now lives only in the out-of-band release gate, where it belongs.
     context = f"""
 Outcome Fusion Principia compiled the user's prompt into a mission.
 {session_paths_block(wdir)}
@@ -175,13 +227,14 @@ Maintain proof only in the session proof ledger.
 
 Core operating rules:
 1. Use first principles and remove non essential parts before adding complexity.
-2. Do not ask low value questions. Make reversible assumptions, execute, verify, and report.
+2. Do not ask low value questions. Make reversible assumptions, execute, and report.
 3. Do not say impossible, cannot, not realistic, or no edge unless verified or reduced to a specific blocker.
 4. Never guess when you can inspect, search, run, calculate, test, backtest, or verify.
 5. Be creative, but evidence locked.
 6. Final answer must use the mission's final response format.
 7. Use the session workspace files above. Do not write global `.ai/outcome_fusion/mission.md`, `proof.md`, or `review.md`.
-8. Before final answer, run the internal closure question: “if the user asks anything else, what release critical miss would I admit?” If the answer is non-empty, fix it now.
+
+{AGENT_OPERATING_BLOCK}
 """.strip()
 
     terminal_log = env_bool("OUTCOME_FUSION_TERMINAL_LOG", True)

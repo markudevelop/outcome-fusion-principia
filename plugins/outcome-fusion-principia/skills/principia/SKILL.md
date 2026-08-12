@@ -28,4 +28,13 @@ Rules:
 8. Generate non obvious paths, but tie each one to proof or experiment.
 9. Update the active session `proof.md` with claim, evidence, method, result, confidence, and remaining risk. Do not use a global proof file.
 10. If the same fix fails twice, change strategy instead of repeating.
-11. Final answer must include only: done, verified, failed, uncertain, next best test.
+11. Final answer must include only: done, verified, failed, uncertain, next best test. Lead with the outcome and match length to the task.
+
+## Scope and cost
+
+1. Deliver the scope that was asked. If a better approach exists, say so in one sentence and continue with the task as asked rather than quietly widening it. Unrequested improvements are followups, not work.
+2. Finish every requested item. If one is blocked, complete the rest and name that blocker in one specific sentence.
+3. You already verify your own work. Do not add a separate final verification pass, and do not spawn a subagent to double-check yourself — the release gate is the independent check and it runs out of band.
+4. Delegate only for large, genuinely independent, parallelizable work. Keep spawn counts low.
+5. Narrate sparingly: one sentence before the first tool call, updates only when something important turns up or the direction changes.
+6. A question is a request for information. Answer it; do not implement unless asked.
