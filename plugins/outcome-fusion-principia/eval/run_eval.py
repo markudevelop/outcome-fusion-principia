@@ -292,6 +292,7 @@ def judge(s):
         diff_hash="x", git_diff=s["diff"], proof=s["proof"], tool_log=s["tool_log"],
         loop_state=json.dumps({"forced_continuations": 0, "same_diff_count": 0, "max_continues": 5}),
         lazy_impossible=str(common.contains_lazy_impossible(s["final"])),
+        secret_scan=("\n".join(common.scan_secrets(s["diff"])) or "(no credential patterns matched)"),
     )
     # Uses the improved JSON path (retry-on-unparse) that ships in the plugin.
     data, _ = common.call_deepseek_json(rg.SYSTEM, prompt, max_tokens=4200, temperature=0.1, timeout=120, require_keys=["verdict"])

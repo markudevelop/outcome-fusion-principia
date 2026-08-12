@@ -49,7 +49,8 @@ Doctrine:
 8. Completion closure: before PASS, run the exact audit the user would trigger by asking “is there anything else?” If that audit would reveal release critical missed work, verdict must be FAIL now. Do not save missed work for later.
 9. Scope discipline: judge against the mission's scope, not against an ideal version of the project. Work the user never asked for is NOT a release blocker — it goes in non_blocking_followups. FAIL for missing, unproven, or broken parts of the requested scope; never to expand it. If the user asked a question rather than for a change, an accurate answer IS the deliverable and unbuilt code is not a miss.
 10. Do not FAIL for the absence of a separate verification pass or a verification subagent. You are that verification pass. Judge the evidence that exists, not the ritual around it.
-12. Evidence QUALITY, not evidence presence. The presence of a test run, a benchmark, or a citation proves nothing by itself; read what it actually establishes. Green is not proven when: tests were skipped, xfailed, or deselected (a "3 passed, 12 skipped" run does not cover the skipped 12); the test asserts nothing, asserts the buggy behaviour, or hardcodes the expected value; it only passed after reruns or a flaky/retry decorator; the code path is behind a flag that defaults to off; or an exception is swallowed so the failure can no longer surface. Count what was NOT covered, not only what passed.
+11. Evidence QUALITY, not evidence presence. The presence of a test run, a benchmark, or a citation proves nothing by itself; read what it actually establishes. Green is not proven when: tests were skipped, xfailed, or deselected (a "3 passed, 12 skipped" run does not cover the skipped 12); the test asserts nothing, asserts the buggy behaviour, or hardcodes the expected value; it only passed after reruns or a flaky/retry decorator; the code path is behind a flag that defaults to off; or an exception is swallowed so the failure can no longer surface. Count what was NOT covered, not only what passed.
+12. SECRET SCAN is authoritative. The GIT DIFF you are shown is redacted before it reaches you, so a committed credential appears as `TOKEN=<REDACTED>` and you CANNOT verify it yourself. If SECRET SCAN lists a finding in application code, that is release blocking on its own, whatever else was achieved: verdict FAIL, and next_actions must say to remove the literal, move it to an environment variable or secret store, and rotate the exposed credential. Findings marked `[test/fixture path ...]` are a deliberate exception — a fake key in a test is normal; call it out in non_blocking_followups and only FAIL if the value looks like a real credential rather than an obvious placeholder. An empty SECRET SCAN is not proof of safety, only that these patterns did not match.
 13. Read the diff for danger independently of the claim, even when every stated goal was met. Treat as release blocking: a credential, token, or key literal added to the code; a destructive or irreversible data operation that was not what was asked for; broad exception swallowing (`except Exception: pass`, empty catch, `|| true`) that converts a failure into silence; and removal of a check, assertion, or test to make something pass. A clean final message and a green suite do not excuse any of these.
 14. Method defects in quantitative and empirical claims. A performance, edge, or accuracy number is unsupported — not merely uncertain — when the method that produced it is broken. Look for: look-ahead or same-bar leakage (a signal computed from data at time t applied to the return at time t); no out-of-sample or walk-forward split, or parameters chosen by ranking a large grid on the whole history; costs, fees, slippage, borrow, or capacity omitted; survivorship or selection bias in the sample; a result reported without n, dispersion, or a significance measure; and a settlement or price proxy standing in for the real observable. An implausibly high headline number with none of these addressed is a FAIL, not a PASS.
 15. Universal scope: the task may be engineering, research, writing, analysis, factual question answering, planning, or decision support. Apply the SAME standard with task-appropriate evidence. For code: build, tests, runs, inspection. For research or factual claims: sources, citations, calculations, cross-checks, and self-consistency. For writing or analysis: does it actually meet the stated requirement, is it accurate, is it complete. NEVER demand code, tests, or a git diff for a task that is not about code; judge it on the evidence that fits its kind. An unsupported factual claim, a missing citation, or an unmet requirement is just as much a FAIL as untested code.
@@ -97,6 +98,9 @@ LOOP STATE:
 LAZY IMPOSSIBILITY LANGUAGE DETECTED:
 {lazy_impossible}
 
+SECRET SCAN OF ADDED DIFF LINES (deterministic, run locally before redaction):
+{secret_scan}
+
 Judge if Claude is allowed to stop.
 
 Return JSON exactly with these keys:
@@ -132,7 +136,28 @@ FAIL if Claude guessed, refused too early, did not verify, created complexity wi
 """.strip()
 
 
-def fallback_review(mission: str, proof: str, tool_log: str, lazy: bool) -> dict:
+def fallback_review(mission: str, proof: str, tool_log: str, lazy: bool, secrets: list[str] | None = None) -> dict:
+    blocking = [s for s in (secrets or []) if "[test/fixture path" not in s]
+    if blocking:
+        secrets = blocking
+        return {
+            "verdict": "FAIL",
+            "release_ready": False,
+            "progress_score": 0,
+            "single_blocker": f"A credential literal was added to the diff ({len(secrets)} finding(s)).",
+            "verified": [],
+            "unsupported_claims": [],
+            "simplify_or_remove": [],
+            "non_obvious_paths": [],
+            "falsification_tests": [],
+            "next_actions": [
+                "Remove the credential literal from the diff.",
+                "Load it from an environment variable or a secret store instead.",
+                "Rotate the exposed credential; assume it is compromised.",
+            ] + list(secrets),
+            "stop_reason_if_pass": "",
+            "memory_update": "Never leave a credential literal in a diff.",
+        }
     if lazy:
         return {
             "verdict": "FAIL",
@@ -236,7 +261,7 @@ def main() -> int:
         payload.get("transcript_path", ""), limit_chars=env_int("OUTCOME_FUSION_MAX_TRANSCRIPT_CHARS", 20000)
     )
     last_message = payload.get("last_assistant_message", "") or ""
-    git_status, git_diff, diff_hash = git_status_and_diff(cwd)
+    git_status, git_diff, diff_hash, secret_findings = git_status_and_diff(cwd)
     signals = project_signals(cwd)
     # Scan only Claude's actual final message. Scanning the recent transcript
     # also matched the plugin's own injected rule text ("never say impossible,
@@ -274,6 +299,7 @@ def main() -> int:
         tool_log=tool_log,
         loop_state=json.dumps(loop_state, ensure_ascii=False),
         lazy_impossible=str(lazy),
+        secret_scan=("\n".join(secret_findings) if secret_findings else "(no credential patterns matched)"),
     )
     # Self-consistency: poll the judge N times and take the majority verdict.
     # Default 3 — the A/B (eval/ab_voting.py) showed 1 sample false-blocks good
@@ -295,7 +321,7 @@ def main() -> int:
                 reviews.append(one)
             if raw.strip():
                 last_raw = raw
-        review = aggregate_reviews(reviews) or fallback_review(mission, proof, tool_log, lazy)
+        review = aggregate_reviews(reviews) or fallback_review(mission, proof, tool_log, lazy, secret_findings)
         # When voting, persist the aggregated review (incl. the vote breakdown)
         # so the decision is auditable; for a single vote keep the raw reply.
         if votes > 1:
@@ -304,7 +330,7 @@ def main() -> int:
             safe_write(wdir / "review.md", last_raw if last_raw.strip() else json.dumps(review, indent=2))
         mirror_latest(wdir, "review.md")
     except Exception as e:
-        review = fallback_review(mission, proof, tool_log, lazy)
+        review = fallback_review(mission, proof, tool_log, lazy, secret_findings)
         safe_write(wdir / "last_error.txt", f"release_gate fallback: {e}\n")
         safe_write(wdir / "review.md", json.dumps(review, ensure_ascii=False, indent=2))
         mirror_latest(wdir, "review.md")

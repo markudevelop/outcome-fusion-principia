@@ -627,3 +627,113 @@ def test_no_dangling_reference_links_in_shipped_skills():
     for sk in (PLUGIN / "skills").rglob("SKILL.md"):
         for link in re.findall(r"\]\((references/[^)]+)\)", sk.read_text(encoding="utf-8")):
             assert (sk.parent / link).exists(), f"{sk.name} links missing {link}"
+
+
+# ---- secret scan: redaction blinds the judge, so detect locally -------------
+
+SECRET_DIFF = '''+++ b/app/config.py
++ANALYTICS_TOKEN = "tok_live_9f2a71c4e5b8"
++requests.post(URL, headers={'Authorization': ANALYTICS_TOKEN})'''
+
+
+def test_redaction_is_why_the_judge_cannot_see_a_committed_secret():
+    # Documents the architectural cause: by the time the diff reaches the judge
+    # the credential reads as already handled. Measured — the secret-in-diff
+    # scenario was missed on every eval run, including after an explicit rule.
+    assert "<REDACTED>" in common.redact(SECRET_DIFF)
+    assert "tok_live_9f2a71c4e5b8" not in common.redact(SECRET_DIFF)
+
+
+def test_scan_secrets_flags_added_credential_lines():
+    findings = common.scan_secrets(SECRET_DIFF)
+    assert findings, "credential literal not detected"
+    assert findings[0].startswith("app/config.py:"), findings
+
+
+def test_scan_secrets_never_echoes_the_secret_value():
+    # The finding crosses the wire to a third-party judge; the value must not.
+    for diff, secret in [
+        (SECRET_DIFF, "tok_live_9f2a71c4e5b8"),
+        ('+key = "sk-abcdefghijklmnopqrstuvwx"', "sk-abcdefghijklmnopqrstuvwx"),
+        ('+token = "ghp_abcdefghijklmnopqrstuvwxyz12"', "ghp_abcdefghijklmnopqrstuvwxyz12"),
+        ('+aws = "AKIAIOSFODNN7EXAMPLE"', "AKIAIOSFODNN7EXAMPLE"),
+    ]:
+        joined = " ".join(common.scan_secrets(diff))
+        assert joined, f"missed: {diff}"
+        assert secret not in joined, f"finding leaked the secret: {joined}"
+
+
+def test_scan_secrets_ignores_removed_and_context_lines():
+    assert common.scan_secrets('-API_KEY = "sk-abcdefghijklmnopqrst"') == []
+    assert common.scan_secrets(' API_KEY = "sk-abcdefghijklmnopqrst"') == []
+    assert common.scan_secrets("+++ b/config.py") == []  # header line only
+
+
+def test_scan_secrets_quiet_on_a_clean_diff():
+    assert common.scan_secrets("+def add(a, b):\n+    return a + b") == []
+    assert common.scan_secrets('+token = os.environ["ANALYTICS_TOKEN"]') == []
+
+
+def test_gate_prompt_and_doctrine_carry_the_scan():
+    assert "{secret_scan}" in release_gate.PROMPT
+    low = release_gate.SYSTEM.lower()
+    assert "secret scan is authoritative" in low
+    assert "rotate the exposed credential" in low
+
+
+def test_heuristic_fallback_fails_closed_on_a_secret():
+    # With no API key the gate used to return PASS, shipping the credential.
+    review = release_gate.fallback_review("m", "proof", "log", False, ["added line 1: hardcoded key/token/password literal"])
+    assert review["verdict"] == "FAIL"
+    assert any("rotate" in a.lower() for a in review["next_actions"])
+
+
+def test_git_status_and_diff_returns_findings(tmp_path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "cfg.py").write_text('API_KEY = "sk-abcdefghijklmnopqrstuv"\n', encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"], cwd=tmp_path, check=True)
+    (tmp_path / "cfg.py").write_text('API_KEY = "sk-abcdefghijklmnopqrstuv"\nTOKEN = "ghp_abcdefghijklmnopqrstuvwxyz12"\n', encoding="utf-8")
+
+    status, diff, digest, secrets = common.git_status_and_diff(tmp_path)
+    assert secrets, "secret in a real git diff was not detected"
+    assert "ghp_abcdefghijklmnopqrstuvwxyz12" not in diff, "raw secret survived redaction"
+
+
+def test_fixture_paths_are_marked_not_silently_blocking():
+    # Without this, any repo that tests its own secret handling — including this
+    # one — would fail its own gate on every run.
+    app = common.scan_secrets('+++ b/app/config.py\n+API_KEY = "sk-abcdefghijklmnopqrstuv"')
+    fixture = common.scan_secrets('+++ b/tests/test_auth.py\n+API_KEY = "sk-abcdefghijklmnopqrstuv"')
+    assert app and "[test/fixture path" not in app[0]
+    assert fixture and "[test/fixture path" in fixture[0]
+
+
+def test_fallback_does_not_block_on_fixture_only_findings():
+    review = release_gate.fallback_review(
+        "m", "proof", "log", False,
+        ["tests/test_auth.py:3: provider secret key (sk-...) [test/fixture path - confirm it is not a real credential]"],
+    )
+    assert review["verdict"] != "FAIL" or "credential literal" not in review["single_blocker"]
+
+
+def test_run_argv_survives_pathspec_quoting_and_non_ascii(tmp_path):
+    # shell=True uses cmd.exe on Windows, where a single quote is an ordinary
+    # character, so ':(exclude).git' reached git with quotes attached and every
+    # diff died with exit 128 — the judge got an error string instead of code.
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "i"], cwd=tmp_path, check=True)
+    (tmp_path / "a.py").write_text("x = 2  # caf\u00e9 \u2014 na\u00efve \u2713\n", encoding="utf-8")
+
+    status, diff, digest, secrets = common.git_status_and_diff(tmp_path)
+    assert "@@" in diff, f"no real diff hunks: {diff[:200]}"
+    assert "exit 128" not in diff and "returned non-zero" not in diff
+    assert "x = 2" in diff
+
+
+def test_run_cmd_keeps_the_failing_commands_own_output():
+    out = common.run_cmd("git rev-parse --verify definitely-not-a-ref", pathlib.Path("."), timeout=15)
+    assert "command failed" in out.lower()
+    assert len(out.strip()) > len("[command failed: exit 128]"), "git's own message was discarded"
